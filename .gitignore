@@ -42,6 +42,12 @@ target_wrapper.*
 *.qmlproject.user
 *.qmlproject.user.*
 
+# python
+__pycache__/*
+
+# configs
+config.json
+
 # QtCreator CMake
 CMakeLists.txt.user*
 
