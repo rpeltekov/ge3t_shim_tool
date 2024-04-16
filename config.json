@@ -1,0 +1,15 @@
+{
+    "rootDir": "",
+    "scannerLog": "logs/scannerLog.txt",
+    "shimLog": "logs/arduinoLog.txt",
+    "guiLog": "logs/guiLog.txt",
+    "host": "",
+    "hvPort": ,
+    "hvUser": "",
+    "hvPassword": "",
+    "exsiPort": ,
+    "exsiProduct": "",
+    "exsiPasswd": "",
+    "shimPort": "/dev/ttyACM1",
+    "shimBaudRate": 9600
+}
