@@ -10,9 +10,13 @@ class Orientation(Enum):
 
 def listSubDirs(directory):
     # Function to list all DICOM files in a directory
-    subdirs = [os.path.join(directory, d) for d in os.listdir(directory) if os.path.isdir(os.path.join(directory, d))]
-    subdirs.sort(key=lambda f: int(f.split('/')[-1][1:]))
-    return subdirs
+    if os.path.exists(directory):
+        subdirs = [os.path.join(directory, d) for d in os.listdir(directory) if os.path.isdir(os.path.join(directory, d))]
+        subdirs.sort(key=lambda f: int(f.split('/')[-1][1:]))
+        return subdirs
+    else:
+        print(f"Directory {directory} does not exist.")
+        return []
 
 def listDicomFiles(dcmSeriesDir):
     # Function to list all DICOM files in a dcmSeriesDir

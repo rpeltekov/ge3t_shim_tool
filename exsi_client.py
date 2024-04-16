@@ -18,10 +18,13 @@ class exsi:
         self.running = True
         self.ready_event = threading.Event()
         self.images_ready_event = threading.Event()
+        self.connected_ready_event = threading.Event()
         self.command_queue = queue.Queue()  # Command queue
         self.output_file = output_file
         self.last_command = ""
         self.examNumber = None
+        self.patientName = None
+
         # task queue, if a protocol is loaded so that we can run tasks in order
         # NOTE: "task" as in task numbers related to the individual scanned sequences in an Exam
         self.task_queue = queue.Queue() 
@@ -144,10 +147,16 @@ class exsi:
         elif self.last_command.startswith("Prescan skip"):
             ready = "Prescan=ok" in msg
         elif self.last_command.startswith("GetExamInfo"):
-            ref = "0020,0010="
-            examnumstart = msg.find(ref) + len(ref)
-            self.examNumber = msg[examnumstart:examnumstart+5]
-            ready = True
+            if "GetExamInfo=ok" in msg:
+                ref = "0020,0010="
+                examnumstart = msg.find(ref) + len(ref)
+                self.examNumber = msg[examnumstart:examnumstart+5]
+                ref = "0010,0010="
+                patientnamestart = msg.find(ref) + len(ref)
+                patientnameend = msg.find(" ", patientnamestart)
+                self.patientName = msg[patientnamestart:patientnameend]
+                ready = True
+                self.connected_ready_event.set() # This only needs to happen once
         elif self.last_command.startswith("SetGrxSlices"):
             ready = True
         elif self.last_command.startswith("SetGrxsomething...."):

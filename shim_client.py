@@ -13,6 +13,7 @@ class shim:
         self.defaultTimeout = defaultTimeout
 
         self.readyEvent = threading.Event()
+        self.connectedEvent = threading.Event()
         self.commandQueue = queue.Queue()
         self.ser = None
         self.readThread = None
@@ -42,6 +43,7 @@ class shim:
         try:
             self.ser = serial.Serial(self.port, self.baudRate, timeout=self.defaultTimeout)
             self.running = True
+            self.connectedEvent.set()
             print(f"INFO SHIM CLIENT: Serial port opened successfully")
         except serial.SerialException as e:
             print(f"Debug: Failed to open serial port: {e}")
@@ -191,7 +193,8 @@ class shim:
         
     def stop(self):
         # try to zero the loops so that current doesn't stay running through the system
-        self._sendCommand("Z")
+        if self.connectedEvent.is_set():
+            self._sendCommand("Z")
         self.running = False
         if self.ser:
             self.ser.close()
