@@ -4,7 +4,7 @@ import numpy as np
 import json
 
 import signal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QMessageBox, QCheckBox, QSizePolicy
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QIntValidator, QPainter
 
@@ -208,20 +208,6 @@ class ExsiGui(QMainWindow):
         # Add the basic layout to the provided layout
         layout.addLayout(basicLayout)
 
-    def setupShimmingTabLayout(self, layout):
-        # Controls and log layout
-        shimLayout = QVBoxLayout()
-
-        self.setupShimButtonsAndLog(shimLayout)
-        
-        # Connect the log monitor
-        self.shimLogMonitorThread = LogMonitorThread(self.shimLog)
-        self.shimLogMonitorThread.update_log.connect(self.updateShimLogOutput)
-        self.shimLogMonitorThread.start()
-        
-        # Add the basic layout to the provided layout
-        layout.addLayout(shimLayout)
-
     def setupExsiButtonsAndLog(self, layout):
         # create the buttons
         self.doCalibrationScanButton = QPushButton("Do Calibration Scan")
@@ -243,52 +229,109 @@ class ExsiGui(QMainWindow):
         layout.addWidget(self.exsiLogOutputLabel)
         layout.addWidget(self.exsiLogOutput)
 
+    def setupShimmingTabLayout(self, layout):
+        # Controls and log layout
+        shimLayout = QVBoxLayout()
+
+        self.setupShimButtonsAndLog(shimLayout)
+        
+        # Connect the log monitor
+        self.shimLogMonitorThread = LogMonitorThread(self.shimLog)
+        self.shimLogMonitorThread.update_log.connect(self.updateShimLogOutput)
+        self.shimLogMonitorThread.start()
+        
+        # Add the basic layout to the provided layout
+        layout.addLayout(shimLayout)
+
     def setupShimButtonsAndLog(self, layout):
-        # Shimming Basic Buttons
-        self.doBasicShimLabel = QLabel("BASIC SHIM OPERATIONS")
-        self.doShimCalibrateButton = QPushButton("Shim: Calibrate")
-        self.doShimCalibrateButton.clicked.connect(self.shimCalibrate)
-        self.doShimZeroButton = QPushButton("Shim: Zero")
-        self.doShimZeroButton.clicked.connect(self.shimZero)
-        self.doShimGetCurrentButton = QPushButton("Shim: Get Currents")
-        self.doShimGetCurrentButton.clicked.connect(self.shimGetCurrent)
+        # shim window is split down the middle to begin with
+        shimSplitLayout = QHBoxLayout()
+        layout.addLayout(shimSplitLayout)
 
-        # horizontal region for channel, current, and button
-        self.shimChannelEntry = QLineEdit()
-        self.shimChannelEntry.setValidator(QIntValidator(0, self.shimInstance.numLoops-1))
-        self.shimCurrentEntry = QLineEdit()
-        self.shimCurrentEntry.setValidator(QDoubleValidator(-2.4, 2.4, 2))
-        self.doShimSetCurrentButton = QPushButton("Shim: Set Current")
-        self.doShimSetCurrentButton.clicked.connect(self.shimSetCurrent)
-        setShimCurrentLayout = QHBoxLayout()
-        setShimCurrentLayout.addWidget(self.shimChannelEntry)
-        setShimCurrentLayout.addWidget(self.shimCurrentEntry)
-        setShimCurrentLayout.addWidget(self.doShimSetCurrentButton)
+        # make the left and right vboxex
+        leftLayout = QVBoxLayout()
+        rightLayout = QVBoxLayout()
+        shimSplitLayout.addLayout(leftLayout)
+        shimSplitLayout.addLayout(rightLayout)
 
-        # Actual Shim Calibation and function operations
-        self.doShimProcedureLabel = QLabel("MACRO SHIM OPERATIONS")
-        # macro for obtaining background scans for every loop
-        self.doLoopCalibrationScansButton = QPushButton("Shim: Perform Background B0map Scans")
-        self.doLoopCalibrationScansButton.clicked.connect(self.doBasisPairScan)
+        # LEFT SIDE
+        
+
+        # RIGHT SIDE
+
+        # MANUAL SHIMMING OPERATIONS START
+        # horizontal box to split up the calibrate zero and get current buttons from the manual set current button and entries 
+        self.domanualShimLabel = QLabel("MANUAL SHIM OPERATIONS")
+        rightLayout.addWidget(self.domanualShimLabel)
+        manualShimLayout = QHBoxLayout()
+        rightLayout.addLayout(manualShimLayout)
+
+        calZeroGetcurrentLayout = QVBoxLayout()
+        manualShimLayout.addLayout(calZeroGetcurrentLayout)
+
+        # add the calibrate zero and get current buttons to left of manualShimLayout
+        manualShimButtonsLayout = QVBoxLayout()
+        manualShimLayout.addLayout(manualShimButtonsLayout)
+        self.shimCalChannelsButton = self.addButtonConnectedToFunction(manualShimButtonsLayout, "Calibrate Shim Channels", self.shimCalibrate)
+        self.shimZeroButton        = self.addButtonConnectedToFunction(manualShimButtonsLayout, "Zero Shim Channels", self.shimZero)
+        self.shimGetCurrentsButton = self.addButtonConnectedToFunction(manualShimButtonsLayout, "Get Shim Currents", self.shimGetCurrent)
+
+        # add the vertical region for channel input, current input, and set current button right of manualShimLayout
+        setChannelCurrentShimLayout = QVBoxLayout()
+        manualShimLayout.addLayout(setChannelCurrentShimLayout)
+        self.shimManualChannelEntry = self.addEntryWithLabel(setChannelCurrentShimLayout, "Channel Index (Int): ", QIntValidator(0, self.shimInstance.numLoops-1))
+        self.shimManualCurrenEntry = self.addEntryWithLabel(setChannelCurrentShimLayout, "Current (A): ", QDoubleValidator(-2.4, 2.4, 2))
+        self.shimManualSetCurrentButton = self.addButtonConnectedToFunction(setChannelCurrentShimLayout, "Shim: Set Currents", self.shimSetCurrent)
+
+        # ACTUAL SHIM OPERATIONS START
+        # Just add the rest of the things to the vertical layout.
+        # add a label and select for the slice index
+        self.shimSliceIndex = self.addEntryWithLabel(rightLayout, "Slice Index (Int): ", QIntValidator(0, 2147483647)) #TODO(rob): validate this after somehow....
+
+        self.doShimProcedureLabel = QLabel("SHIM OPERATIONS")
+        rightLayout.addWidget(self.doShimProcedureLabel)
+
+        # macro for obtaining background scans
+        self.doBackgroundScansButton, self.doBackgroundScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Background B0map Scans", self.doBackgroundScans)
         # mega macro for performing all calibrations scans for every loop
-        self.doLoopCalibrationScansButton = QPushButton("Shim: Perform Loop Calibration B0map Scans")
-        self.doLoopCalibrationScansButton.clicked.connect(self.doLoopCalibrationScans)
+        self.doLoopCalibrationScansBurron, self.doLoopCalibrationScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Loop Calibration B0map Scans", self.doLoopCalibrationScans)
+        # macro for setting All computed shim currents
+        self.setAllCurrentsButton, self.setAllCurrentsMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Set All Computed Currents", self.shimSetAllCurrents)
+        # macro for obtaining shimmed background scan 
+        self.doShimmedScansButton, self.doShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Shimmed Eval Scans", self.doShimmedScans)
 
+        # Add the log output here
         self.shimLogOutput = QTextEdit()
         self.shimLogOutput.setReadOnly(True)
         self.shimLogOutputLabel = QLabel("SHIM Log Output")
+        rightLayout.addWidget(self.shimLogOutputLabel)
+        rightLayout.addWidget(self.shimLogOutput)
 
-        layout.addWidget(self.doBasicShimLabel)
-        layout.addWidget(self.doShimCalibrateButton)
-        layout.addWidget(self.doShimZeroButton)
-        layout.addWidget(self.doShimGetCurrentButton)
-        layout.addLayout(setShimCurrentLayout)
+    def addButtonConnectedToFunction(self, layout, buttonName, function):
+        button = QPushButton(buttonName)
+        button.clicked.connect(function)
+        layout.addWidget(button)
+        return button
 
-        layout.addWidget(self.doShimProcedureLabel)
-        layout.addWidget(self.doLoopCalibrationScansButton)
-
-        layout.addWidget(self.shimLogOutputLabel)
-        layout.addWidget(self.shimLogOutput)
+    def addEntryWithLabel(self, layout, labelStr, entryvalidator):
+        label = QLabel(labelStr)
+        entry = QLineEdit()
+        entry.setValidator(entryvalidator)
+        labelEntryLayout = QHBoxLayout()
+        labelEntryLayout.addWidget(label)
+        labelEntryLayout.addWidget(entry)
+        layout.addLayout(labelEntryLayout)
+        return entry
+    
+    def addButtonWithFuncAndMarker(self, layout, buttonName, function):
+        hlayout = QHBoxLayout()
+        layout.addLayout(hlayout)
+        marker = QCheckBox("Done?")
+        marker.setEnabled(False)
+        marker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        button = self.addButtonConnectedToFunction(hlayout, buttonName, function)
+        hlayout.addWidget(marker)
+        return button, marker
 
     ##### GRAPHICS FUNCTION DEFINITIONS #####   
 
@@ -347,9 +390,10 @@ class ExsiGui(QMainWindow):
     def updateShimLogOutput(self, text):
         self.shimLogOutput.append(text)
     
-    ##### HELPER FUNCTIONS FOR EXSI CONTROL BUTTONS #####
+    ##### HELPER FUNCTIONS FOR EXSI CONTROL BUTTONS !!!! NO BUTTON SHOULD MAP TO THIS #####
     
     def iterateBasisPairScan(self):
+        """once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps."""
         # TODO(rob): eventually add these to the config file
         cvs = {"act_tr": 3300, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
         for i in range(2):
@@ -381,6 +425,33 @@ class ExsiGui(QMainWindow):
     def doCaliBasisPairScan(self, channelNum):
         self.queueLoadWithCaliCurrentSet(channelNum)
         self.iterateBasisPairScan()
+
+    def shimSetCurrentManual(self, channel, current, board=0):
+        """helper function to set the current for a specific channel on a specific board."""
+        if self.shimInstance:
+            self.shimInstance.send(f"X {board} {channel} {current}")
+
+    ##### REQUIRE DECORATORS #####
+
+    def requireShimConnection(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.shimInstance.connectedEvent.is_set():
+                # Show a message to the user, reconnect shim client.
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Icon.Warning)
+                msg.setWindowTitle("SHIM Client Not Connected")
+                msg.setText("The SHIM client is still not connected to shim arduino.")
+                msg.setInformativeText("Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\
+                                       \nCheck that the arduino port is set correctly using serial_finder.sh script.")
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec() 
+                # have it close the exsi gui
+                self.close()
+                return
+            return func(self)
+        return wrapper
 
     def requireExsiConnection(func):
         """Decorator to check if the EXSI client is connected before running a function."""
@@ -419,7 +490,36 @@ class ExsiGui(QMainWindow):
             return func(self)
         return wrapper
 
-    ##### MACRO FUNCTION DEFINITIONS; These are the functions that handle button clicks #####   
+    ##### BUTTON FUNCTION DEFINITIONS; These are the functions that handle button click #####   
+    # as such they should all be decorated in some fashion to not allow for operations to happen if they cannot
+
+    ##### SHIM CLIENT CONTROL FUNCTIONS #####   
+
+    @requireShimConnection
+    def shimCalibrate(self):
+        if self.shimInstance:
+            self.shimInstance.send("C")
+
+    @requireShimConnection
+    def shimZero(self):
+        if self.shimInstance:
+            self.shimInstance.send("Z")
+
+    @requireShimConnection
+    def shimGetCurrent(self):
+        # Could be used to double check that the channels calibrated
+        if self.shimInstance:
+            self.shimInstance.send("I")
+    
+    @requireShimConnection
+    def shimSetCurrent(self):
+        # get the values from the fields above
+        board = 0
+        if not self.shimManualCurrenEntry.text() or not self.shimManualChannelEntry.text():
+            return
+        self.shimSetCurrentManual(int(self.shimManualChannelEntry.text()), float(self.shimManualCurrenEntry.text()), board)
+
+    #### More macro type of button presses
 
     @requireExsiConnection
     def doTransferDataAndGetImage(self):
@@ -459,11 +559,39 @@ class ExsiGui(QMainWindow):
                 self.getLatestImage(stride=1)
     
     @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
+    def doBackgroundScans(self):
+        # Perform the background scans for the shim system.
+        self.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
+        self.doBasisPairScan()
+        self.background = None
+        # WAIT FOR THE BACKGROUND SCANS TO COMPLETE
+    
+    @requireExsiConnection
+    @requireShimConnection
     @requireAssetCalibration
     def doLoopCalibrationScans(self):
         """Perform all the calibration scans for each loop in the shim system."""
         for i in range(self.shimInstance.numLoops):
             self.doCaliBasisPairScan(i)
+
+    @requireShimConnection
+    def shimSetAllCurrents(self, currents):
+        # require that currents have been computed, i.e. that background marker and loopcal marker are set
+        # TODO(rob)
+        for i in range(self.shimInstance.numLoops):
+            self.shimSetCurrentManual(i%8, currents[i], i//8)
+
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
+    def doShimmedScans(self):
+        # require that the shim currents have been computed, and set 
+        # Perform another set of scans now that it is shimmed
+        self.doBasisPairScan()
+        self.shimmedBackground = None
+        # WAIT FOR THE BACKGROUND SCANS TO COMPLETE
 
     ##### EXSI CLIENT CONTROL FUNCTIONS #####   
 
@@ -504,26 +632,6 @@ class ExsiGui(QMainWindow):
 
     ##### SHIM COMPUTATION FUNCTIONS #####   
 
-    def requireShimConnection(func):
-        """Decorator to check if the EXSI client is connected before running a function."""
-        def wrapper(self, *args, **kwargs):
-            # Check the status of the event
-            if not self.shimInstance.connectedEvent.is_set():
-                # Show a message to the user, reconnect shim client.
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Icon.Warning)
-                msg.setWindowTitle("SHIM Client Not Connected")
-                msg.setText("The SHIM client is still not connected to shim arduino.")
-                msg.setInformativeText("Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\
-                                       \nCheck that the arduino port is set correctly using serial_finder.sh script.")
-                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                msg.exec() 
-                # have it close the exsi gui
-                self.close()
-                return
-            return func(self)
-        return wrapper
-
     def computeShimCurrents(self):
         # assumes that you have gotten background by doBasisPairScan and also doLoopCalibrationScans
         # you also need to have transferred them into the local exam root directory to use them..
@@ -545,42 +653,6 @@ class ExsiGui(QMainWindow):
 
         # TODO(rob): add all the hooks to update the gui from here or maybe from the UI area of this code...
 
-    ##### SHIM CLIENT CONTROL FUNCTIONS #####   
-
-    @requireShimConnection
-    def shimCalibrate(self):
-        if self.shimInstance:
-            self.shimInstance.send("C")
-
-    @requireShimConnection
-    def shimZero(self):
-        if self.shimInstance:
-            self.shimInstance.send("Z")
-
-    @requireShimConnection
-    def shimGetCurrent(self):
-        # Could be used to double check that the channels calibrated
-        if self.shimInstance:
-            self.shimInstance.send("I")
-    
-    @requireShimConnection
-    def shimSetCurrent(self):
-        # get the values from the fields above
-        board = 0
-        if not self.shimCurrentEntry.text() or not self.shimChannelEntry.text():
-            return
-        if self.shimInstance:
-            self.shimInstance.send(f"X {board} {int(self.shimChannelEntry.text())} {float(self.shimCurrentEntry.text())}")
-
-    def shimSetCurrentManual(self, channel, current, board=0):
-        if self.shimInstance:
-            self.shimInstance.send(f"X {board} {channel} {current}")
-    
-    @requireShimConnection
-    def shimSetAllCurrents(self, currents):
-        for i in range(self.shimInstance.numLoops):
-            self.shimSetCurrentManual(i%8, currents[i], i//8)
-
     ##### SCAN DATA RELATED FUNCTIONS #####   
 
     # TODO(rob): move most of these transfer functions into their own UTIL file. dataUtils.py or smth
@@ -597,21 +669,6 @@ class ExsiGui(QMainWindow):
             self.log(f"Connection or command execution failed: {e}")
         finally:
             client.close()
-
-    def execSCPCommand(self, source, destination):
-        # Construct the SCP command using sshpass
-        cmd = f"sshpass -p {self.config['hvPassword']} scp -r {self.config['hvUser']}@{self.config['host']}:{source} {destination}"
-
-        # Execute the SCP command
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Wait for the command to complete
-        stdout, stderr = process.communicate()
-
-        # Check if the command was executed successfully
-        if process.returncode == 0:
-            return stdout.decode('utf-8')
-        else:
-            return f"Error: {stderr.decode('utf-8')}"
 
     def execRsyncCommand(self, source, destination):
         # Construct the SCP command using sshpass
@@ -643,18 +700,24 @@ class ExsiGui(QMainWindow):
         self.log(f"Debug: obtained exam data path: {self.gehcExamDataPath}")
 
     def transferScanData(self):
-        self.log(f"Debug: initiating transfer.")
+        self.log(f"Debug: initiating transfer using rsync.")
         if self.gehcExamDataPath is None:
             self.setGehcExamDataPath()
-            # perform initial transfer
-            self.execSCPCommand(self.gehcExamDataPath, self.localExamRootDir)
-            self.log(f"Debug: Getting initial data and using scp")
-        else:
-            self.execRsyncCommand(self.gehcExamDataPath + '/*', self.localExamRootDir)
-            self.log(f"Debug: already got some data and using rsync")
+        self.execRsyncCommand(self.gehcExamDataPath + '/*', self.localExamRootDir)
 
+    def getLatestImage(self, stride=1, offset=0):
+        self.log(f"Debug: local exam root {self.localExamRootDir}") 
+        latestDCMDir = listSubDirs(self.localExamRootDir)[-1]
+        self.log(f"debug: latest dcm dir {latestDCMDir}")
+        res = extractBasicImageData(latestDCMDir, stride, offset)
+        self.currentImageData, self.currentImageTE, self.currentImageOrientation = res
+        self.log(f"Debug: obtained image here with this shape and type: {self.currentImageData.shape}, {self.currentImageData.dtype}")
+        self.log(f"Debug: obtained image with TE and orientation: {self.currentImageTE}, {self.currentImageOrientation}")
+        sliceIndex = int(self.sliceEntry.text()) if self.sliceEntry.text() else 0
+        self.updateImageDisplay(sliceIndex)
+
+    # TODO(rob): remove these because they seem useless
     def execBashCommand(self, cmd):
-        # TODO(rob) remove this function because i think it is not used at all...
         # Execute the bash command
         process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         # Wait for the command to complete
@@ -666,15 +729,20 @@ class ExsiGui(QMainWindow):
         else:
             return f"Error: {stderr.decode('utf-8')}"
 
-    def getLatestImage(self, stride=1, offset=0):
-        self.log(f"Debug: local exam root {self.localExamRootDir}") 
-        latestDCMDir = listSubDirs(self.localExamRootDir)[-1]
-        res = extractBasicImageData(latestDCMDir, stride, offset)
-        self.currentImageData, self.currentImageTE, self.currentImageOrientation = res
-        self.log(f"Debug: obtained image here with this shape and type: {self.currentImageData.shape}, {self.currentImageData.dtype}")
-        self.log(f"Debug: obtained image with TE and orientation: {self.currentImageTE}, {self.currentImageOrientation}")
-        sliceIndex = int(self.sliceEntry.text()) if self.sliceEntry.text() else 0
-        self.updateImageDisplay(sliceIndex)
+    def execSCPCommand(self, source, destination):
+        # Construct the SCP command using sshpass
+        cmd = f"sshpass -p {self.config['hvPassword']} scp -r {self.config['hvUser']}@{self.config['host']}:{source} {destination}"
+
+        # Execute the SCP command
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Wait for the command to complete
+        stdout, stderr = process.communicate()
+
+        # Check if the command was executed successfully
+        if process.returncode == 0:
+            return stdout.decode('utf-8')
+        else:
+            return f"Error: {stderr.decode('utf-8')}"
 
     ##### OTHER METHODS ######
 
