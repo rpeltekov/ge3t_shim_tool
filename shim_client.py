@@ -39,14 +39,25 @@ class shim:
         self.startRecieveThread()
         self.startCommandProcessThread()
 
+        # startup procedure to show when connected
+        def waitForConnection():
+            self._sendCommand("I")
+            if not self.readyEvent.is_set():
+                self.readyEvent.wait()
+            self.connectedEvent.set()
+            print(f"INFO SHIM CLIENT: Connection Created successfully")
+        t = threading.Thread(target=waitForConnection)
+        t.daemon = True 
+        t.start()
+
     def openPort(self):
         try:
             self.ser = serial.Serial(self.port, self.baudRate, timeout=self.defaultTimeout)
-            self.running = True
-            self.connectedEvent.set()
             print(f"INFO SHIM CLIENT: Serial port opened successfully")
+            self.running = True
         except serial.SerialException as e:
             print(f"Debug: Failed to open serial port: {e}")
+            # TODO(rob): maybe add a way to retry the connection
 
     def startRecieveThread(self):
         if self.ser and self.ser.is_open:
@@ -67,7 +78,7 @@ class shim:
                     ready = self.readyEvent.wait(1)
                     if not ready:
                         self.stop()
-                        raise TimeoutError("Error: Command send to Shim Arduino. No valid responce recv.")
+                        raise TimeoutError(f"Error: Command {cmd} send to Shim Arduino. No valid responce recv.")
                     # Response was recieved, clear the event and pop cmd from queue
                     self.readyEvent.clear()
                     self.commandQueue.task_done()
@@ -116,7 +127,11 @@ class shim:
         fail = False
 
         if self.lastCommand.startswith("I"):
-            fail = "X" in msg
+            if not self.connectedEvent.is_set():
+                # this is just a connection check in this case
+                fail = False
+            else:
+                fail = "X" in msg
             ready = "Done Printing Currents" in msg
             # TODO(rob): update the loop currents here too whenever this is run.
         elif self.lastCommand.startswith("C"):
@@ -184,7 +199,8 @@ class shim:
     def clearCommandQueue(self):
         while not self.commandQueue.empty():
             try:
-                self.commandQueue.get_nowait()
+                cmd = self.commandQueue.get_nowait()
+                print(f"SHIM CLIENT Debug: Clearing command: {cmd}")
                 self.commandQueue.task_done()
             except queue.Empty:
                 break
@@ -192,9 +208,13 @@ class shim:
             file.write("\n CMD Queue CLEARED due to failure.")
         
     def stop(self):
-        # try to zero the loops so that current doesn't stay running through the system
-        if self.connectedEvent.is_set():
-            self._sendCommand("Z")
+        # print out the command queue if it was not empty
+        if not self.commandQueue.empty():
+            self.clearCommandQueue()
+        else:
+            # try to zero bc it was empty so commands likely work still
+            if self.connectedEvent.is_set():
+                self._sendCommand("Z")
         self.running = False
         if self.ser:
             self.ser.close()
@@ -203,41 +223,6 @@ class shim:
     def __del__(self):
         self.stop()
     
-
-#### OLD STUFFFFF
-# def check_for_commands(command_file):
-#     """Check the command file for new commands, execute them, and clear the file."""
-#     try:
-#         with open(command_file, "r+") as file:
-#             commands = file.readlines()
-#             file.seek(0)
-#             file.truncate()  # Clear the file after reading commands
-#         return commands
-#     except FileNotFoundError:
-#         return []
-
-# def handle_serial(port, baud_rate=9600, command_file="commands.txt", log_file="arduino_log.txt"):
-#     with open(command_file, "w") as file:
-#         pass
-#     with open(log_file, "w") as file:
-#         pass
-
-#     with serial.Serial(port, baud_rate, timeout=1) as ser:
-#         print(f"Serial handler started for {port} at {baud_rate} baud.")
-#         while True:
-#             # Check for new commands
-#             commands = check_for_commands(command_file)
-#             for command in commands:
-#                 ser.write(command.encode())
-#                 time.sleep(0.5)  # Adjust based on your Arduino's needs
-            
-#             # Read and log data from Arduino
-#             if ser.inWaiting() > 0:
-#                 data = ser.readline().decode('utf-8').rstrip()
-#                 print(data)  # Optional: Print to console
-#                 with open(log_file, "a") as file:
-#                     file.write(data + "\n")
-
 if __name__ == "__main__":
     arduino_port = "/dev/ttyACM1"  # Adjust to your Arduino's serial port
     # handle_serial(arduino_port)

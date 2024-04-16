@@ -9,20 +9,23 @@ def compute_b0map(first, second, te1, te2):
 def compute_b0maps(n, localExamRootDir):
     # NOTE: Assumes that n most recent scans are all basis pair scans.
     """ Computes the last n b0maps from pairs"""
-    seriesPaths = listSubDirs(localExamRootDir)[-n*2:]
+    seriesPaths = listSubDirs(localExamRootDir)
+    seriesPaths = seriesPaths[-n*2:]
     b0maps = []
-    for i in range(0, n, 2):
+    for i in range(0, n*2, 2):
         phase1, te1, name1 = extractComplexImageData(seriesPaths[i])
+        print(f"DEBUG: Extracted te1 {te1}, name1 {name1}")
         phase2, te2, name2 = extractComplexImageData(seriesPaths[i+1])
+        print(f"DEBUG: Extracted te2 {te2}, name2 {name2}")
         b0map = compute_b0map(phase1, phase2, te1, te2)
         b0maps.append(b0map)
     return b0maps
 
-def subtractBackground(b0maps):
+def subtractBackground(background, b0maps):
     # NOTE: Assumes b0maps[0] is background and the rest are loops @ 1 A!!!!
     bases = []
-    for i in range(len(b0maps)-1):
-        bases.append(b0maps[i] - b0maps[0])
+    for i in range(len(b0maps)):
+        bases.append(b0maps[i] - background)
     return bases
 
 # TODO(rob): consider the offset in the position to make an affine linear gradient.
@@ -45,7 +48,7 @@ def addNaiveLinGrad(bases):
     for i in range(3):
         bases.append(basismult[i]*max_value)
 
-def creatMask(background, bases, roi=None, sliceIndex=-1, orientation=Orientation.CORONAL):
+def createMask(background, bases, roi=None, sliceIndex=-1, orientation=Orientation.CORONAL):
     # need to vectorize the inputs
     # to do so, we need to use a mask, first consider NaN vals after thresh mask
     masks = [~np.isnan(background)]

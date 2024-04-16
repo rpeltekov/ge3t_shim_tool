@@ -51,11 +51,11 @@ def extractMetadata(dcm):
     series_desc = getattr(dcm, 'SeriesDescription')
 
     # add orientation
-    if 'Image Orientation (Patient)' in dcm:
-        orientation_cosines = dcm['Image Orientation (Patient)'].value
-        orientation = get_orientation(orientation_cosines)
-    else:
-        orientation = None 
+    # if 'Image Orientation (Patient)' in dcm:
+    #     orientation_cosines = dcm['Image Orientation (Patient)'].value
+    #     orientation = get_orientation(orientation_cosines)
+    # else:
+    orientation = None 
 
     return te, series_desc
 

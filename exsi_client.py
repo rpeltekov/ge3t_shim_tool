@@ -39,9 +39,51 @@ class exsi:
 
         self.start_receiving_thread()
         self.start_command_processor_thread()  # Start the command processor thread
+
+        # these trigger the connected event!
         self.send(f'ConnectToScanner product={exsiProduct} passwd={exsiPasswd}')
         self.send('NotifyEvent all=on')
         self.send('GetExamInfo')
+
+    def start_command_processor_thread(self):
+        def process_commands():
+            while self.running:
+                try:
+                    # Wait for up to 1 second
+                    cmd = self.command_queue.get(timeout=1) 
+                    # check if we need to initialize current switch as well...
+                    if "|" in cmd:
+                        cmd = cmd.split(" | ")
+                        cmd, current_cmd = cmd[0], cmd[1]
+                        pattern = r"(\d+)\s(\d+\.\d+)"
+                        match = re.match(pattern, current_cmd)
+                        channel = int(match.group(1))
+                        current = float(match.group(2))
+                        if self.debugging:
+                            print(f"EXSI CLIENT Debug: SENDING CURRENT COMMANDS, channel {channel} current {current:.2f}")
+                        self.sendZeroCmd()
+                        self.sendCurrentCmd(channel, current)
+                    self._send_command(cmd)
+                    #TODO(rob): see if this timeout of 60 can be fixed in any way here...
+                    ready = self.ready_event.wait(60)
+                    if not ready:
+                        self.stop()
+                        raise TimeoutError(f"Error: Command {cmd} was sent to scanner. Timeout waiting for valid recv.")
+                    # Response was recieved, clear the event and pop cmd from queue
+                    self.ready_event.clear()
+                    self.command_queue.task_done()
+                except queue.Empty:
+                    # Go back to the start of the loop to check self.running again
+                    continue
+
+        self.command_processor_thread = threading.Thread(target=process_commands)
+        self.command_processor_thread.daemon = True
+        self.command_processor_thread.start()
+
+    def start_receiving_thread(self):
+        self.receiving_thread = threading.Thread(target=self.receive_loop)
+        self.receiving_thread.daemon = True
+        self.receiving_thread.start()
 
     def send(self, cmd, immediate=False):
         if immediate:
@@ -74,12 +116,6 @@ class exsi:
             self.s.send(struct.pack('!I', 100))
             self.s.send(tcmd)
 
-    def rcv(self, length=6000):
-        data = self.s.recv(length)
-        msg = str(data, 'UTF-8', errors='ignore')
-        msg = msg[msg.find('<')+1:]
-        return msg
-
     def receive_loop(self):
         while self.running:
             try:
@@ -110,6 +146,12 @@ class exsi:
                                "\n!!!Please Restart the Client!!!\n")
                 break
 
+    def rcv(self, length=6000):
+        data = self.s.recv(length)
+        msg = str(data, 'UTF-8', errors='ignore')
+        msg = msg[msg.find('<')+1:]
+        return msg
+
     def is_ready(self, msg):
         # Return a tuple (success, is_ready, images_ready)
         
@@ -137,9 +179,17 @@ class exsi:
             ready = "PatientTable=ok" in msg
         elif self.last_command.startswith("LoadProtocol"):
             ready = "LoadProtocol=ok" in msg
-            tasks = msg[msg.find('taskKeys=')+9:-2].split(",")
-            for task in tasks:
-                self.task_queue.put(task)
+            # i want to use regex to extract out task keys from message.
+            pattern = r"taskKeys=([0-9, ]+)"
+            match = re.search(pattern, msg)
+            if match:
+                taskKeys = match.group(1).split(',')
+                taskKeys = [int(key.strip()) for key in taskKeys]
+                print(f"EXSI CLIENT DEBUG: Task keys found in message: ", taskKeys)
+                for task in taskKeys:
+                    self.task_queue.put(task)
+            else:
+                print(f"EXSI CLIENT DEBUG: No task keys found in message: {msg}")
         elif self.last_command.startswith("SetCVs"):
             ready = "SetCVs=ok" in msg
         elif self.last_command.startswith("Prescan auto"):
@@ -173,55 +223,18 @@ class exsi:
     def clear_command_queue(self):
         while not self.command_queue.empty():
             try:
-                self.command_queue.get_nowait()
+                cmd = self.command_queue.get_nowait()
+                print(f"EXSI CLIENT DEBUG: Clearing command: {cmd}")
                 self.command_queue.task_done()
             except queue.Empty:
                 break
         with open(self.output_file, 'a') as file:
             file.write("Command queue cleared due to failure.\n")
 
-    def start_receiving_thread(self):
-        self.receiving_thread = threading.Thread(target=self.receive_loop)
-        self.receiving_thread.daemon = True
-        self.receiving_thread.start()
-
-    def start_command_processor_thread(self):
-        def process_commands():
-            while self.running:
-                try:
-                    # Wait for up to 1 second
-                    cmd = self.command_queue.get(timeout=1) 
-                    # check if we need to initialize current switch as well...
-                    if "|" in cmd:
-                        cmd = cmd.split(" | ")
-                        cmd, current_cmd = cmd[0], cmd[1]
-                        pattern = r"(\d+)\s(\d+\.\d+)"
-                        match = re.match(pattern, current_cmd)
-                        channel = int(match.group(1))
-                        current = float(match.group(2))
-                        if self.debugging:
-                            print(f"EXSI CLIENT Debug: SENDING CURRENT COMMANDS, channel {channel} current {current:.2f}")
-                        self.sendZeroCmd()
-                        self.sendCurrentCmd(channel, current)
-                    self._send_command(cmd)
-                    #TODO(rob): see if this timeout of 60 can be fixed in any way here...
-                    ready = self.ready_event.wait(60)
-                    if not ready:
-                        self.stop()
-                        raise TimeoutError("Error: Command was sent to scanner. Timeout waiting for valid recv.")
-                    # Response was recieved, clear the event and pop cmd from queue
-                    self.ready_event.clear()
-                    self.command_queue.task_done()
-                except queue.Empty:
-                    # Go back to the start of the loop to check self.running again
-                    continue
-
-        self.command_processor_thread = threading.Thread(target=process_commands)
-        self.command_processor_thread.daemon = True
-        self.command_processor_thread.start()
-
     def stop(self):
         self.running = False
+        # print out command queue if it is not empty
+        self.clear_command_queue()
         self.s.shutdown(socket.SHUT_RDWR)
         self.s.close()
         print("INFO EXSI CLIENT: socket closed successfully. bye.")
