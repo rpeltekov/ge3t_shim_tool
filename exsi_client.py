@@ -10,10 +10,13 @@ class exsi:
     def __init__(self, host, port, exsiProduct, exsiPasswd, shimZeroFunc, shimCurrentFunc, output_file='scanner_log.txt', debugging=False):
         self.debugging = debugging
     
+        self.exsiProduct = exsiProduct
+        self.exsiPasswd = exsiPasswd
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.settimeout(1)  # Set a timeout of 1 second
         self.s.connect((host, port))
-        print(f"INFO EXSI CLIENT: Socket connected successfully")
+        print(f"INFO EXSI CLIENT: Socket connected")
+
         self.counter = 0
         self.running = True
         self.ready_event = threading.Event()
@@ -32,6 +35,7 @@ class exsi:
         # function passed from GUI to directly queue a shimSetCurrentManual command
         self.sendCurrentCmd = lambda channel, current: shimCurrentFunc(channel, current)
         self.sendZeroCmd = lambda : shimZeroFunc()
+        self.clearShimQueue = lambda : None
 
         # Clear the Log
         with open(self.output_file, 'w'):
@@ -40,8 +44,11 @@ class exsi:
         self.start_receiving_thread()
         self.start_command_processor_thread()  # Start the command processor thread
 
+        self.connectExsi()
+
+    def connectExsi(self):
         # these trigger the connected event!
-        self.send(f'ConnectToScanner product={exsiProduct} passwd={exsiPasswd}')
+        self.send(f'ConnectToScanner product={self.exsiProduct} passwd={self.exsiPasswd}')
         self.send('NotifyEvent all=on')
         self.send('GetExamInfo')
 
@@ -51,6 +58,7 @@ class exsi:
                 try:
                     # Wait for up to 1 second
                     cmd = self.command_queue.get(timeout=1) 
+                    print("EXSI CLIENT DEBUG: Processing command: ", cmd)
                     # check if we need to initialize current switch as well...
                     if "|" in cmd:
                         cmd = cmd.split(" | ")
@@ -133,7 +141,9 @@ class exsi:
                         notify += "\nClearing Command Queue\n\n"
                         with open(self.output_file, 'a') as file:
                             file.write(notify)
+                        print(f"EXSI CLIENT DEBUG: Command {self.last_command} failed, clearing command queue.")
                         self.clear_command_queue()  # Clear the queue on failure
+                        self.clearShimQueue() # Clear the shim queue too on failure
                     if is_ready:
                         self.ready_event.set()
                     if images_ready:

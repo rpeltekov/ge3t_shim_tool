@@ -6,16 +6,16 @@ def compute_b0map(first, second, te1, te2):
     # Naively compute the b0 map using two phase images from the scans with different TEs
     return np.angle(np.conj(first)*second) / (2*np.pi) / ((te2-te1)*1e-3)
 
-def compute_b0maps(n, localExamRootDir):
+def compute_b0maps(n, localExamRootDir, threshFactor=.4):
     # NOTE: Assumes that n most recent scans are all basis pair scans.
     """ Computes the last n b0maps from pairs"""
     seriesPaths = listSubDirs(localExamRootDir)
     seriesPaths = seriesPaths[-n*2:]
     b0maps = []
     for i in range(0, n*2, 2):
-        phase1, te1, name1 = extractComplexImageData(seriesPaths[i])
+        phase1, te1, name1 = extractComplexImageData(seriesPaths[i], threshFactor=threshFactor)
         print(f"DEBUG: Extracted te1 {te1}, name1 {name1}")
-        phase2, te2, name2 = extractComplexImageData(seriesPaths[i+1])
+        phase2, te2, name2 = extractComplexImageData(seriesPaths[i+1], threshFactor=threshFactor)
         print(f"DEBUG: Extracted te2 {te2}, name2 {name2}")
         b0map = compute_b0map(phase1, phase2, te1, te2)
         b0maps.append(b0map)
@@ -48,19 +48,30 @@ def addNaiveLinGrad(bases):
     for i in range(3):
         bases.append(basismult[i]*max_value)
 
-def createMask(background, bases, roi=None, sliceIndex=-1, orientation=Orientation.CORONAL):
-    # need to vectorize the inputs
-    # to do so, we need to use a mask, first consider NaN vals after thresh mask
-    masks = [~np.isnan(background)]
-    for base in bases:
-        masks.append(~np.isnan(base))
+def createMask(background, bases, roi, sliceIndex=-1, orientation=Orientation.CORONAL):
+    # require that one of background, bases and roi is not None
+    if background is None and bases is None and roi is None:
+        raise ValueError("At least one of background, bases or roi must be provided")
+
+    masks = []
+    if background is not None:
+        masks.append(~np.isnan(background))
+    if bases is not None:
+        print(f"debug: {bases}")
+        for base in bases:
+            masks.append(~np.isnan(base))
     # then add roi if there is one
     if roi is not None:
         masks.append(~np.isnan(roi))
     # consider slice only if it is provided TODO(rob): add other orientations more nicely
-    if sliceIndex >= 0 and orientation == Orientation.CORONAL:
-        sliceMask = np.zeros(background.shape)
-        sliceMask[sliceIndex] = np.nan
+    if sliceIndex >= 0: #and orientation == Orientation.CORONAL:
+        if background is not None:
+            sliceMask = np.zeros(background.shape)
+        elif bases is not None:
+            sliceMask = np.zeros(bases[0].shape)
+        else:
+            sliceMask = np.zeros(roi.shape)
+        sliceMask[:,sliceIndex,:] = np.nan
         masks.append(np.isnan(sliceMask))
 
     # union the masks
@@ -70,9 +81,10 @@ def createMask(background, bases, roi=None, sliceIndex=-1, orientation=Orientati
     
     return mask
 
-def solveCurrents(background, rawBases, mask, withLinGrad=True, debug=False):
+def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False):
     # make a copy so that we can work with that instead
     bases = []
+
     for base in rawBases:
         bases.append(base.copy())
 
@@ -82,13 +94,23 @@ def solveCurrents(background, rawBases, mask, withLinGrad=True, debug=False):
 
     # vectorize using the final mask
     vectorized = []
-    for base in bases:
-        vectorized.append(base[mask])
+    for i in range(len(bases)):
+        masked = bases[i][mask] 
+        if debug:
+            print(f"DEBUG: vector {i} has nans : {np.isnan(masked).any()}")
+        vectorized.append(masked)
     
     # Craft the Least Squar Problem
     A = np.stack(vectorized, axis=1)
     y = background[mask]
 
+    if y.size == 0 or A.size == 0:
+        return None
+
+    if debug:
+        # print and check if A or y still have nans
+        print(f"DEBUG: A has nans: {np.isnan(A).any()}, y has nans: {np.isnan(y).any()}")
+        print(f"DEBUG: A.shape {A.shape}, A.T.shape {A.T.shape}, y.shape: {y.shape}")
     p = 2 * A.T @ A
     q = 2 * y.T @ A
 
@@ -110,11 +132,13 @@ def solveCurrents(background, rawBases, mask, withLinGrad=True, debug=False):
         print(g)
         print(h)
     
-    res = solvers.qp(matrix(p), matrix(q), matrix(g), matrix(h))
+    try:
+        res = solvers.qp(matrix(p), matrix(q), matrix(g), matrix(h))
+    except ValueError as e:
+        print(f"DEBUG: Error in solving the problem: {e}")
+        return None
 
-    currents = res['x']
-
-    return currents
+    return res['x']
 
 def evaluate(d, debug=False):
     """ Evaluate a vector with basic stats"""
@@ -122,6 +146,7 @@ def evaluate(d, debug=False):
     mean_og = np.nanmean(d)
     median_og = np.nanmedian(d)
     
+    stats = f" RESULTS (Hz):\nSt. Dev: {std_og:.3f}\nMean: {mean_og:.3f}\nMedian: {median_og:.3f}"
     if debug:
-        print(f" BASELINE RESULTS (Hz): \n\nSt. Dev: {std_og}\nMean: {mean_og}\nMedian: {median_og}\n\n")
-    return std_og, mean_og, median_og
+        print(stats)
+    return stats, std_og, mean_og, median_og

@@ -59,7 +59,7 @@ def extractMetadata(dcm):
 
     return te, series_desc
 
-def extractComplexImageData(dcmSeriesPath):
+def extractComplexImageData(dcmSeriesPath, threshFactor=.4):
     # NOTE: Assumes that Mag, I, Q images are interleaved in the series!!!
     # Process a dicom directory and pulls out masked complex data
     paths = listDicomFiles(dcmSeriesPath)
@@ -83,7 +83,7 @@ def extractComplexImageData(dcmSeriesPath):
     Qs = np.stack(Qs, axis=0)
     phase = Is + 1j*Qs
 
-    thresh = np.mean(mags)/2
+    thresh = np.mean(mags) * threshFactor
     mask = mags < thresh
     phase[mask] = np.nan
 

@@ -25,6 +25,9 @@ class shim:
         self.loopCurrents = [0 for _ in range(self.numLoops)] 
         self.calibrated = False
 
+        # this gets set in the Exsi Gui
+        self.clearExsiQueue = lambda : None
+
         # Clear the Log
         with open(self.outputFile, "w"):
             pass
@@ -41,7 +44,7 @@ class shim:
 
         # startup procedure to show when connected
         def waitForConnection():
-            self._sendCommand("I")
+            self.send("C")
             if not self.readyEvent.is_set():
                 self.readyEvent.wait()
             self.connectedEvent.set()
@@ -119,6 +122,7 @@ class shim:
                         with open(self.outputFile, 'a') as file:
                             file.write(notify)
                         self.clearCommandQueue()  # Clear the queue on failure
+                        self.clearExsiQueue()
         except Exception as e:
             print(f"Debug SHIM CLIENT: Error while reading from serial port: {e}")
 
@@ -127,15 +131,10 @@ class shim:
         fail = False
 
         if self.lastCommand.startswith("I"):
-            if not self.connectedEvent.is_set():
-                # this is just a connection check in this case
-                fail = False
-            else:
-                fail = "X" in msg
+            fail = "X" in msg
             ready = "Done Printing Currents" in msg
             # TODO(rob): update the loop currents here too whenever this is run.
         elif self.lastCommand.startswith("C"):
-            fail = "failed (cal)" in msg
             ready = "Done Calibrating" in msg
             if ready:
                 self.calibrated = True

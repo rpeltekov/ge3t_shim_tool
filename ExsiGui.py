@@ -1,11 +1,11 @@
 from datetime import datetime
-import time, sys, paramiko, subprocess, os, threading
+import sys, paramiko, subprocess, os, threading
 import numpy as np
 import json
 
 import signal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QMessageBox, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QIntValidator, QPainter
 
 # Import the custom client classes and util functions
@@ -13,29 +13,7 @@ from exsi_client import exsi
 from shim_client import shim
 from dicomUtils import *
 from shimCompute import *
-
-class LogMonitorThread(QThread):
-    update_log = pyqtSignal(str)
-
-    def __init__(self, filename, parent=None):
-        super(LogMonitorThread, self).__init__(parent)
-        self.filename = filename
-        self.running = True
-
-    def run(self):
-        self.running = True
-        with open(self.filename, 'r') as file:
-            # Move to the end of the file
-            file.seek(0, 2)
-            while self.running:
-                line = file.readline()
-                if not line:
-                    time.sleep(0.1)  # Sleep briefly to allow for a stop check
-                    continue
-                self.update_log.emit(line)
-
-    def stop(self):
-        self.running = False
+from utils import *
 
 class ExsiGui(QMainWindow):
     """
@@ -74,6 +52,10 @@ class ExsiGui(QMainWindow):
         # The requireExsiConnection decorator will check if the connection is ready before executing any exsi functionality.
         self.exsiInstance = exsi(self.config['host'], self.config['exsiPort'], self.config['exsiProduct'], self.config['exsiPasswd'],
                                  self.shimZero, self.shimSetCurrentManual, self.scannerLog)
+        
+        # connect the clear queue commands so that they can be called from the other client
+        self.shimInstance.clearExsiQueue = self.exsiInstance.clear_command_queue
+        self.exsiInstance.clearShimQueue = self.shimInstance.clearCommandQueue
 
         # shim specific markers
         self.assetCalibrationDone = False
@@ -83,21 +65,30 @@ class ExsiGui(QMainWindow):
 
         # the results which are used to compute shim values
         self.shimSliceIndex = 20 # default slice index to shim at
+        self.roiSliceIndex = 20
+
         self.background = None
-        self.rawBasisB0maps = []
-        self.basisB0maps = []
-        self.currents = []
         self.expShimmedBackground = None
         self.shimmedBackground = None
-        self.roiMask = None
+        self.shimImages = [self.background, self.expShimmedBackground, self.shimmedBackground]
+        self.shimImage = self.shimImages[0]
+
+        self.shimStats = [None, None, None]
+
+        self.rawBasisB0maps = []
+        self.basisB0maps = []
+        self.currents = None # currents for every single slice
+        self.roiMask = None # for when the user draws in the desired 3d ROI
+        self.finalMask = None # the actual mask used to compute any shimming
 
         # All the attributes for scan session that need to be None to start with.
-        self.currentImageData = None
+        self.currentROIImageData = None
         self.currentImageTE = None
         self.currentImageOrientation = None
         self.gehcExamDataPath = None
         self.localExamRootDir = None
 
+        self.slowButtons = []
         # Setup the GUI
         self.initUI()
         
@@ -161,73 +152,54 @@ class ExsiGui(QMainWindow):
     def setupBasicTabLayout(self, layout):
         # basic layout is horizontal
         basicLayout = QHBoxLayout()
+        layout.addLayout(basicLayout)
+
+        # Add imageLayout to the basicLayout
+        imageLayout = QVBoxLayout()
+        basicLayout.addLayout(imageLayout)
 
         # Setup QGraphicsView for image display
         self.roiScene = QGraphicsScene()
         self.roiView = QGraphicsView(self.roiScene)
         self.roiView.setFixedSize(512, 512)  # Set a fixed size for the view
         self.roiView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        imageLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
         
-        # Placeholder text setup, and the actual pixmap item
-        self.placeholderText = QGraphicsTextItem("Waiting for image data")
-        self.placeholderText.setPos(50, 250)  # Position the text appropriately within the scene
-        self.roiScene.addItem(self.placeholderText)
+        # roiPlaceholder text setup, and the actual pixmap item
+        self.roiPlaceholderText = QGraphicsTextItem("Waiting for image data")
+        self.roiPlaceholderText.setPos(50, 250)  # Position the text appropriately within the scene
+        self.roiScene.addItem(self.roiPlaceholderText)
         self.roiPixmapItem = QGraphicsPixmapItem()
         self.roiScene.addItem(self.roiPixmapItem)
-        self.roiPixmapItem.setZValue(1)  # Ensure pixmap item is above the placeholder text
+        self.roiPixmapItem.setZValue(1)  # Ensure pixmap item is above the roiPlaceholder text
 
-        # TODO(rob): use the new helpers that I defined below
         # Slider for selecting slices
-        self.roiSliceSlider = QSlider(Qt.Orientation.Horizontal)
-        self.roiSliceSlider.valueChanged.connect(self.updateFromROISliceSlider)
-        # QLineEdit for manual slice entry
-        self.roiSliceEntry = QLineEdit()
-        self.roiSliceEntry.setValidator(QIntValidator(0, 0))  # Initial range will be updated
-        self.roiSliceEntry.editingFinished.connect(self.updateFromSliceROIEntry)
-        
-        # Update the layout to include the QLineEdit
-        imageLayout = QVBoxLayout()
-        sliderLayout = QHBoxLayout()  # New layout for slider and line edit
-        sliderLayout.addWidget(self.roiSliceSlider)
-        sliderLayout.addWidget(self.roiSliceEntry)
-        imageLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
-        imageLayout.addLayout(sliderLayout)  # Add the horizontal layout to the vertical layout
-
-        # Add imageLayout to the basicLayout
-        basicLayout.addLayout(imageLayout)
+        self.roiSliceIndexSlider, self.roiSliceIndexEntry = self.addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", QIntValidator(0, 0)) #TODO(rob): validate this after somehow....
+        self.roiSliceIndexSlider.valueChanged.connect(self.updateFromROISliceSlider)
+        self.roiSliceIndexEntry.editingFinished.connect(self.updateFromSliceROIEntry)
 
         # Controls and log layout
         controlsLayout = QVBoxLayout()
-        self.setupExsiButtonsAndLog(controlsLayout)
-        
-        # Add controlsLayout to the basicLayout
         basicLayout.addLayout(controlsLayout)
+        self.setupExsiButtonsAndLog(controlsLayout)
 
         # Connect the log monitor
         self.exsiLogMonitorThread = LogMonitorThread(self.scannerLog)
         self.exsiLogMonitorThread.update_log.connect(self.updateExsiLogOutput)
         self.exsiLogMonitorThread.start()
         
-        # Add the basic layout to the provided layout
-        layout.addLayout(basicLayout)
 
     def setupExsiButtonsAndLog(self, layout):
         # create the buttons
-        self.doCalibrationScanButton = QPushButton("Do Calibration Scan")
-        self.doCalibrationScanButton.clicked.connect(self.doCalibrationScan)
-        self.doFgreScanButton = QPushButton("Do FGRE Scan")
-        self.doFgreScanButton.clicked.connect(self.doFgreScan)
-        self.renderLatestDataButton = QPushButton("Render Latest Data")
-        self.renderLatestDataButton.clicked.connect(self.doTransferDataAndGetImage)
+        self.reconnectExsiButton = self.addButtonConnectedToFunction(layout, "Reconnect EXSI", self.exsiInstance.connectExsi)
+        self.doCalibrationScanButton = self.addButtonConnectedToFunction(layout, "Do Calibration Scan", self.doCalibrationScan)
+        self.doFgreScanButton = self.addButtonConnectedToFunction(layout, "Do FGRE Scan", self.doFgreScan)
+        self.renderLatestDataButton = self.addButtonConnectedToFunction(layout, "Render Latest Data", self.doTransferDataAndGetImage)
+        self.slowButtons += [self.doCalibrationScanButton, self.doFgreScanButton, self.renderLatestDataButton]
 
         self.exsiLogOutput = QTextEdit()
         self.exsiLogOutput.setReadOnly(True)
         self.exsiLogOutputLabel = QLabel("EXSI Log Output")
-        # Add controls and log to controlsLayout
-        layout.addWidget(self.doCalibrationScanButton)
-        layout.addWidget(self.doFgreScanButton)
-        layout.addWidget(self.renderLatestDataButton)
-
 
         layout.addWidget(self.exsiLogOutputLabel)
         layout.addWidget(self.exsiLogOutput)
@@ -263,8 +235,9 @@ class ExsiGui(QMainWindow):
         # Create the QButtonGroup
         shimVizButtonWindow = QWidget()
         shimVizButtonLayout = QHBoxLayout()
+        shimVizButtonWindow.setLayout(shimVizButtonLayout)
         self.shimVizButtonGroup = QButtonGroup(shimVizButtonWindow)
-        leftLayout.addLayout(shimVizButtonLayout)
+        leftLayout.addWidget(shimVizButtonWindow)
 
         # Create the radio buttons
         shimVizButtonBackground = QRadioButton("Background")
@@ -273,12 +246,13 @@ class ExsiGui(QMainWindow):
         shimVizButtonBackground.setChecked(True)  # Default to background
 
         # Add the radio buttons to the button group
-        self.shimVizButtonGroup.addButton(shimVizButtonBackground)
+        self.shimVizButtonGroup.addButton(shimVizButtonBackground, 0)
         shimVizButtonLayout.addWidget(shimVizButtonBackground)
-        self.shimVizButtonGroup.addButton(shimVizButtonEstBackground)
+        self.shimVizButtonGroup.addButton(shimVizButtonEstBackground, 1)
         shimVizButtonLayout.addWidget(shimVizButtonEstBackground)
-        self.shimVizButtonGroup.addButton(shimVizButtonShimmedBackground)
+        self.shimVizButtonGroup.addButton(shimVizButtonShimmedBackground, 2)
         shimVizButtonLayout.addWidget(shimVizButtonShimmedBackground)
+        self.shimVizButtonGroup.idClicked.connect(self.toggleShimImage)
 
         # add another graphics scene visualizer
         
@@ -290,20 +264,25 @@ class ExsiGui(QMainWindow):
         self.shimView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         
         # Placeholder text setup, and the actual pixmap item
-        self.placeholderText = QGraphicsTextItem("Waiting for image data")
-        self.placeholderText.setPos(50, 250)  # Position the text appropriately within the scene
-        self.shimScene.addItem(self.placeholderText)
+        self.shimPlaceholderText = QGraphicsTextItem("Waiting for image data")
+        self.shimPlaceholderText.setPos(50, 250)  # Position the text appropriately within the scene
+        self.shimScene.addItem(self.shimPlaceholderText)
         self.shimPixmapItem = QGraphicsPixmapItem()
         self.shimScene.addItem(self.shimPixmapItem)
-        self.shimPixmapItem.setZValue(1)  # Ensure pixmap item is above the placeholder text
+        #self.shimPixmapItem.setZValue(1)  # Ensure pixmap item is above the shimPlaceholder text
 
         # add the statistics output using another non editable textedit widget
-        self.shimStatText = QTextEdit()
-        self.shimStatText.setReadOnly(True)
-        self.shimStatTextLabel = QLabel("Image Statistics")
-        leftLayout.addWidget(self.shimStatTextLabel)
-        leftLayout.addWidget(self.shimStatText)
-
+        shimStatTextLabel = QLabel("Image Statistics")
+        shimBackStatText = QTextEdit()
+        shimBackStatText.setReadOnly(True)
+        shimTestStatText = QTextEdit()
+        shimTestStatText.setReadOnly(True)
+        self.shimStatText = [shimBackStatText, shimTestStatText]
+        statsLayout = QHBoxLayout()
+        statsLayout.addWidget(shimBackStatText)
+        statsLayout.addWidget(shimTestStatText)
+        leftLayout.addWidget(shimStatTextLabel)
+        leftLayout.addLayout(statsLayout)
 
         # RIGHT SIDE
 
@@ -330,30 +309,41 @@ class ExsiGui(QMainWindow):
         self.shimManualChannelEntry = self.addEntryWithLabel(setChannelCurrentShimLayout, "Channel Index (Int): ", QIntValidator(0, self.shimInstance.numLoops-1))
         self.shimManualCurrenEntry = self.addEntryWithLabel(setChannelCurrentShimLayout, "Current (A): ", QDoubleValidator(-2.4, 2.4, 2))
         self.shimManualSetCurrentButton = self.addButtonConnectedToFunction(setChannelCurrentShimLayout, "Shim: Set Currents", self.shimSetCurrent)
+        self.slowButtons += [self.shimCalChannelsButton, self.shimZeroButton, self.shimGetCurrentsButton, self.shimManualSetCurrentButton]
 
         # ACTUAL SHIM OPERATIONS START
         # Just add the rest of the things to the vertical layout.
         # add a label and select for the slice index
         self.shimSliceIndexSlider, self.shimSliceIndexEntry = self.addLabeledSliderAndEntry(rightLayout, "Slice Index (Int): ", QIntValidator(0, 2147483647)) #TODO(rob): validate this after somehow....
+        self.shimSliceIndexSlider.valueChanged.connect(self.updateFromShimSliceIndexSlider)
+        self.shimSliceIndexEntry.editingFinished.connect(self.updateFromShimSliceIndexEntry)
+        self.shimSliceIndexSlider.setValue(self.shimSliceIndex)
         self.shimSliceIndexEntry.setText(str(self.shimSliceIndex))
+        self.shimSliceIndexSlider.setEnabled(False)
+        self.shimSliceIndexEntry.setEnabled(False)
+
+        recomputeLayout = QHBoxLayout()
+        self.recomputeCurrents, self.withLinGradMarker = self.addButtonWithFuncAndMarker(recomputeLayout, "Shim: Recompute Currents", self.triggerComputeShimCurrents, "Linear Gradients?")
+        self.currentsDisplay = QLineEdit()
+        self.currentsDisplay.setReadOnly(True)
+        recomputeLayout.addWidget(self.currentsDisplay)
+        rightLayout.addLayout(recomputeLayout)
 
         self.doShimProcedureLabel = QLabel("SHIM OPERATIONS")
         rightLayout.addWidget(self.doShimProcedureLabel)
 
         # macro for obtaining background scans
         self.doBackgroundScansButton, self.doBackgroundScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Background B0map Scans", self.doBackgroundScans)
-        # mega macro for performing all calibrations scans for every loop
         self.doLoopCalibrationScansButton, self.doLoopCalibrationScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Loop Calibration B0map Scans", self.doLoopCalibrationScans)
-        # macro for setting All computed shim currents on the driver
-        setAllCurrentsLayout = QHBoxLayout()
+        setAllCurrentsLayout = QHBoxLayout() # need a checkbox in front of the set all currents button to show that the currents have been computed
         rightLayout.addLayout(setAllCurrentsLayout)
         self.currentsComputedMarker = QCheckBox("Currents Computed?")
         self.currentsComputedMarker.setEnabled(False)
         self.currentsComputedMarker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         setAllCurrentsLayout.addWidget(self.currentsComputedMarker)
         self.setAllCurrentsButton, self.setAllCurrentsMarker = self.addButtonWithFuncAndMarker(setAllCurrentsLayout, "Shim: Set All Computed Currents", self.shimSetAllCurrents)
-        # macro for obtaining shimmed background scan 
         self.doShimmedScansButton, self.doShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Shimmed Eval Scans", self.doShimmedScans)
+        self.slowButtons += [self.doBackgroundScansButton, self.doLoopCalibrationScansButton, self.setAllCurrentsButton, self.doShimmedScansButton]
 
         # Add the log output here
         self.shimLogOutput = QTextEdit()
@@ -390,39 +380,28 @@ class ExsiGui(QMainWindow):
         layout.addLayout(labelEntryLayout)
         return slider, entry
     
-    def addButtonWithFuncAndMarker(self, layout, buttonName, function):
+    def addButtonWithFuncAndMarker(self, layout, buttonName, function, markerName="Done?"):
         hlayout = QHBoxLayout()
         layout.addLayout(hlayout)
-        marker = QCheckBox("Done?")
-        marker.setEnabled(False)
+        marker = QCheckBox(markerName)
         marker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        button = self.addButtonConnectedToFunction(hlayout, buttonName, function)
-        hlayout.addWidget(marker)
+        if markerName == "Done?":
+            marker.setEnabled(False)
+            button = self.addButtonConnectedToFunction(hlayout, buttonName, function)
+            hlayout.addWidget(marker)
+        else:
+            hlayout.addWidget(marker)
+            button = self.addButtonConnectedToFunction(hlayout, buttonName, function)
         return button, marker
 
     ##### GRAPHICS FUNCTION DEFINITIONS #####   
 
-    def reconnectClient(self):
-        # TODO(rob): add buttons to relaunch the clients if they die
-        pass
-
-    def updateROIImageDisplay(self, roiSliceIndex):
-        if self.currentImageData is not None:
-            # Update the slider range based on the new data
-            depth = self.currentImageData.shape[0]
-            self.roiSliceSlider.setMinimum(0)
-            self.roiSliceSlider.setMaximum(depth - 1)
-            self.roiSliceEntry.setValidator(QIntValidator(0, depth - 1))
-
-            # If roiSliceIndex is None or out of new bounds, default to first slice
-            if roiSliceIndex is None or roiSliceIndex >= depth:
-                roiSliceIndex = 0
-            self.roiSliceSlider.setValue(roiSliceIndex)
-            
-            # The rest of your image display logic remains the same...
-            sliceData = np.ascontiguousarray(self.currentImageData[roiSliceIndex])
+    def updateROIImageDisplay(self):
+        if self.currentROIImageData is not None:
+            self.validateROISliceIndexControls(self.roiSliceIndex)
+            sliceData = np.ascontiguousarray(self.currentROIImageData[self.roiSliceIndex])
             # Extract the slice and normalize it
-            sliceData = self.currentImageData[roiSliceIndex].astype(float)  # Convert to float for normalization
+            sliceData = self.currentROIImageData[self.roiSliceIndex].astype(float)  # Convert to float for normalization
             normalizedData = (sliceData - sliceData.min()) / (sliceData.max() - sliceData.min()) * 255
             displayData = normalizedData.astype(np.uint8)  # Convert to uint8
             height, width = displayData.shape
@@ -435,31 +414,157 @@ class ExsiGui(QMainWindow):
                 self.roiPixmapItem.setPixmap(pixmap)
                 self.roiScene.setSceneRect(self.roiPixmapItem.boundingRect())  # Adjust scene size to the pixmap's bounding rect
                 self.roiView.fitInView(self.roiPixmapItem, Qt.AspectRatioMode.KeepAspectRatio)  # Fit the view to the item
-                self.placeholderText.setVisible(False)
+                self.roiPlaceholderText.setVisible(False)
                 self.roiView.viewport().update()  # Force the viewport to update
 
         else:
-            self.placeholderText.setVisible(True)
+            self.roiPlaceholderText.setVisible(True)
+
+    # TODO(rob) should make this a single function since it is basically a copy of the other one
+    def updateShimImageAndStats(self):
+        self.log(f"DEBUG selected shim image: {self.shimVizButtonGroup.checkedId()}")
+        select = self.shimVizButtonGroup.checkedId()
+        self.shimImage = self.shimImages[select]
+        if self.shimImage is not None:
+            self.shimImage = self.shimImage if select == 0 else self.shimImage[self.shimSliceIndex]
+            if self.shimImage is not None:
+                sliceData = np.ascontiguousarray(self.shimImage[:,self.shimSliceIndex,:]).astype(float)
+                # want this normalization to be constant for every slice and for every kind of image...
+                normalizedData = (sliceData - self.shimImageValMin) / (self.shimImageValMax - self.shimImageValMin) * 255
+                displayData = normalizedData.astype(np.uint8)  # Convert to uint8
+                height, width = displayData.shape
+                bytesPerLine = displayData.strides[0] 
+                qImage = QImage(displayData.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
+                if qImage.isNull():
+                    self.log("Debug: Failed to create QImage")
+                else:
+                    self.shimView.viewport().setVisible(True)
+                    pixmap = QPixmap.fromImage(qImage)
+                    self.shimPixmapItem.setPixmap(pixmap)
+                    self.shimScene.setSceneRect(self.shimPixmapItem.boundingRect())  # Adjust scene size to the pixmap's bounding rect
+                    self.shimView.fitInView(self.shimPixmapItem, Qt.AspectRatioMode.KeepAspectRatio)  # Fit the view to the item
+                    self.shimPlaceholderText.setVisible(False)
+                    self.shimView.viewport().update()  # Force the viewport to update
+
+                # show the background stat always:
+                if self.shimStats[0] is not None:
+                    text = self.shimstats[select][self.shimsliceindex]
+                    if text is None:
+                        text = "no stats available"
+                else:
+                    text = "No stats available"
+                self.shimStatsText[0].setText(prefixs[0] + text)
+
+                prefixs = ["Est. ", "Actual "]
+                if select > 0:
+                    if self.shimStats[select] is not None:
+                        text = self.shimStats[select][self.shimSliceIndex]
+                        if text is None:
+                            text = "no stats available"
+                    else:
+                        text = "No stats available"                
+                    text = prefixs[select] + text
+                    self.shimStatText[select].setText(text)
+
+                # if currents are available
+                if self.currents is not None:
+                    if self.currents[self.shimSliceIndex] is not None:
+                        text = ""
+                        for i in range(self.shimInstance.numLoops):
+                            text += f"{i}:{self.currents[self.shimSliceIndex][i]:.3f}|"
+                    else:
+                        text = "No currents available "
+                    self.currentsDisplay.setText(text[:-1])
+                else:
+                    self.currentsDisplay.setText("No currents available")
+                return 
+        self.shimView.viewport().setVisible(False)
+        self.shimPlaceholderText.setVisible(True)
+
+    # Making sure that the sliders and entries stay in sync!
+
+    def validateROISliceIndexControls(self, value):
+        if self.currentROIImageData is not None:
+            # Update the slider range based on the new data
+            depth = self.currentROIImageData.shape[0]
+            self.roiSliceIndexSlider.setMinimum(0)
+            self.roiSliceIndexSlider.setMaximum(depth - 1)
+            self.roiSliceIndexEntry.setValidator(QIntValidator(0, depth - 1))
+
+            # If roiSliceIndex is None or out of new bounds, default to first slice
+            if value is None or value >= depth:
+                self.log("DEBUG: Invalid slice index, defaulting to 0")
+                self.roiSliceIndex = 0
+            else:
+                self.roiSliceIndex = value
+        else:
+            self.roiSliceIndex = value
 
     def updateFromSliceROIEntry(self):
         # Update the display based on the manual entry in QLineEdit
-        roiSliceIndex = int(self.roiSliceEntry.text()) if self.roiSliceEntry.text() else 0
-        self.updateROIImageDisplay(roiSliceIndex)
+        index = int(self.roiSliceIndexEntry.text()) if self.roiSliceIndexEntry.text() else 0
+        self.validateROISliceIndexControls(index)
+        self.roiSliceIndexSlider.setValue(self.roiSliceIndex)
+        self.updateROIImageDisplay()
 
     def updateFromROISliceSlider(self, value):
         # Directly update the line edit when the slider value changes
-        self.roiSliceEntry.setText(str(value))
-        self.updateROIImageDisplay(value)
+        self.validateROISliceIndexControls(value)
+        self.roiSliceIndexEntry.setText(str(self.roiSliceIndex))
+        self.updateROIImageDisplay()
+    
+    def validateShimSliceIndexControls(self, value):
+        if self.shimImages[0] is not None:
+            # update depth to consider which orientation is selected. in which case it wont be 0 here if not coronal
+            depth = self.shimImages[0].shape[1]
+            self.shimSliceIndexEntry.setValidator(QIntValidator(0, depth - 1))
+            self.shimSliceIndexSlider.setMinimum(0)
+            self.shimSliceIndexSlider.setMaximum(depth - 1)
+            # If shimSliceIndex is None or out of new bounds, default to first slice
+            if value is None or value >= depth:
+                self.log("DEBUG: Invalid slice index, defaulting to 0")
+                self.shimSliceIndex = 0
+            else:
+                self.shimSliceIndex = value
+
+        self.shimImageValMax, self.shimImageValMin = -np.inf, np.inf
+        for i in range(3):
+            if self.shimImages[i] is not None:
+                if i == 0:
+                    self.shimImageValMax = max(np.nanmax(self.shimImages[i]), self.shimImageValMax)
+                    self.shimImageValMin = min(np.nanmin(self.shimImages[i]), self.shimImageValMin)
+                else:
+                    for j in range(self.shimImages[0].shape[1]):
+                        if self.shimImages[i][j] is not None:
+                            self.shimImageValMax = max(np.nanmax(self.shimImages[i][j]), self.shimImageValMax)
+                            self.shimImageValMin = min(np.nanmin(self.shimImages[i][j]), self.shimImageValMin)
+
+    def updateFromShimSliceIndexEntry(self):
+        index = int(self.shimSliceIndexEntry.text()) if self.shimSliceIndexEntry.text() else 0
+        self.shimSliceIndexSlider.setValue(index)
+        self.shimSliceIndex = index
+        self.updateShimImageAndStats()
+
+    def updateFromShimSliceIndexSlider(self, value):
+        # Directly update the line edit when the slider value changes
+        self.shimSliceIndex = value
+        self.shimSliceIndexEntry.setText(str(self.shimSliceIndex))
+        self.updateShimImageAndStats()
 
     def updateExsiLogOutput(self, text):
         self.exsiLogOutput.append(text)
 
     def updateShimLogOutput(self, text):
         self.shimLogOutput.append(text)
+
+    def toggleShimImage(self, id):
+        self.log(f"DEBUG: Toggling shim image to {id}")
+        self.shimImage = self.shimImages[id]
+        self.updateShimImageAndStats()
     
     ##### HELPER FUNCTIONS FOR EXSI CONTROL BUTTONS !!!! NO BUTTON SHOULD MAP TO THIS #####
     
-    def iterateBasisPairScan(self):
+    def queueBasisPairScanDetails(self):
         """once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps."""
         # TODO(rob): eventually add these to the config file
         cvs = {"act_tr": 3300, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
@@ -473,7 +578,7 @@ class ExsiGui(QMainWindow):
                 else:
                     self.sendSetCV(cv, cvs[cv])
             self.sendPatientTable()
-            if not self.autoPrescanDone:
+            if not self.autoPrescanDone and not self.debugging:
                 self.sendPrescan(auto=True)
                 self.autoPrescanDone = True
             else:
@@ -485,14 +590,14 @@ class ExsiGui(QMainWindow):
         # command and also a Zero Current and setCurrent to channelNum with calibration current of 1.0
         self.sendLoadProtocol(f"ConformalShimCalibration3 | {channelNum} 1.0")
 
-    def doBasisPairScan(self):
+    def queueBasisPairScan(self):
         # Basic basis pair scan. should be used to scan the background
         self.sendLoadProtocol("ConformalShimCalibration3")
-        self.iterateBasisPairScan()
+        self.queueBasisPairScanDetails()
 
-    def doCaliBasisPairScan(self, channelNum):
+    def queueCaliBasisPairScan(self, channelNum):
         self.queueLoadWithCaliCurrentSet(channelNum)
-        self.iterateBasisPairScan()
+        self.queueBasisPairScanDetails()
 
     def shimSetCurrentManual(self, channel, current, board=0):
         """helper function to set the current for a specific channel on a specific board."""
@@ -512,67 +617,10 @@ class ExsiGui(QMainWindow):
         """if background and basis maps are obtained, compute the shim currents"""
         if self.doBackgroundScansMarker.isChecked() and self.doLoopCalibrationScansMarker.isChecked():
             self.computeShimCurrents()
-            self.currentsComputedMarker.setChecked(True)
-
-    ##### REQUIRE DECORATORS #####
-
-    def createMessageBox(self, title, text, informativeText):
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setWindowTitle(title)
-        msg.setText(text)
-        msg.setInformativeText(informativeText)
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        return msg
-
-    def requireShimConnection(func):
-        """Decorator to check if the EXSI client is connected before running a function."""
-        def wrapper(self, *args, **kwargs):
-            # Check the status of the event
-            if not self.shimInstance.connectedEvent.is_set():
-                # Show a message to the user, reconnect shim client.
-                msg = self.createMessageBox("SHIM Client Not Connected",
-                                            "The SHIM client is still not connected to shim arduino.", 
-                                            "Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\n" +
-                                            "Check that the arduino port is set correctly using serial_finder.sh script.")
-                msg.exec() 
-                # have it close the exsi gui
-                self.close()
-                return
-            return func(self)
-        return wrapper
-
-    def requireExsiConnection(func):
-        """Decorator to check if the EXSI client is connected before running a function."""
-        def wrapper(self, *args, **kwargs):
-            # Check the status of the event
-            if not self.exsiInstance.connected_ready_event.is_set():
-                # Show a message to the user, reconnect exsi client.
-                msg = self.createMessageBox("EXSI Client Not Connected", 
-                                            "The EXSI client is still not connected to scanner.", 
-                                            "Closing Client.\nCheck that External Host on scanner computer set to 'newHV'.")
-                msg.exec() 
-                # have it close the exsi gui
-                self.close()
-                return
-            return func(self)
-        return wrapper
+        else:
+            self.computeMask(self.rawBasisB0maps)
+        self.evaluateShimImages()
     
-    def requireAssetCalibration(func):
-        """Decorator to check if the ASSET calibration scan is done before running a function."""
-        def wrapper(self, *args, **kwargs):
-            if not self.assetCalibrationDone and not self.debugging:
-                #TODO(rob): probably better to figure out how to look at existing scan state. somehow check all performed scans on start?
-                self.log("Debug: Need to do calibration scan before running scan with ASSET.")
-                # Show a message to the user, reconnect exsi client.
-                msg = self.createMessageBox("Asset Calibration Scan Not Performed",
-                                            "Asset Calibration scan not detected to be completed.", 
-                                            "Please perform calibration scan before continuing with this scan")
-                msg.exec() 
-                return
-            return func(self)
-        return wrapper
-
     ##### BUTTON FUNCTION DEFINITIONS; These are the functions that handle button click #####   
     # as such they should all be decorated in some fashion to not allow for operations to happen if they cannot
 
@@ -602,132 +650,168 @@ class ExsiGui(QMainWindow):
             return
         self.shimSetCurrentManual(int(self.shimManualChannelEntry.text()), float(self.shimManualCurrenEntry.text()), board)
 
-    #### More macro type of button presses
-
-    @requireExsiConnection
-    def doTransferDataAndGetImage(self):
+    #### More macro type button functions. These are slow, so disable other buttons while they are running, but unblock the rest of the gui ####
+    
+    @disableSlowButtonsTillDone
+    def transferDataAndGetImageWork(self, trigger):
         self.transferScanData()
         if os.path.exists(self.localExamRootDir):
             self.getLatestROIImage(stride=1)
+            trigger.finished.emit()
         else:
             self.log("Debug: local directory has not been made yet...")
+    @requireExsiConnection
+    def doTransferDataAndGetImage(self):
+        work = Trigger()
+        work.finished.connect(self.updateROIImageDisplay)
+        kickoff_thread(self.transferDataAndGetImageWork, args=(work,))
 
+
+    @disableSlowButtonsTillDone
+    def calibrationScanWork(self, trigger):
+        self.sendLoadProtocol("ConformalShimCalibration4")
+        self.sendSelTask()
+        self.sendActTask()
+        self.sendPatientTable()
+        self.sendScan()
+        # TODO(rob): make this a part of the decorator function to grey out related buttons
+        if self.exsiInstance.images_ready_event.wait(timeout=120):
+            self.assetCalibrationDone = True
+            self.exsiInstance.images_ready_event.clear()
+        trigger.finished.emit()
     @requireExsiConnection
     def doCalibrationScan(self):
         # dont need to do the assetCalibration scan more than once
-        if self.exsiInstance and not self.assetCalibrationDone:
-            self.sendLoadProtocol("ConformalShimCalibration4")
-            self.sendSelTask()
-            self.sendActTask()
-            self.sendPatientTable()
-            self.sendScan()
-            # TODO(rob): make this a part of the decorator function to grey out related buttons
-            if self.exsiInstance.images_ready_event.wait(timeout=120):
-                self.assetCalibrationDone = True
-                self.exsiInstance.images_ready_event.clear()
+        if not self.exsiInstance or self.assetCalibrationDone:
+            return
+        trigger = Trigger()
+        trigger.finished.connect(self.updateROIImageDisplay)
+        kickoff_thread(self.calibrationScanWork, args=(trigger,))
     
+
+    @disableSlowButtonsTillDone
+    def fgreScanWork(self, trigger):
+        self.sendLoadProtocol("ConformalShimCalibration5")
+        self.sendSelTask()
+        self.sendActTask()
+        self.sendPatientTable()
+        self.sendScan()
+        if not self.exsiInstance.images_ready_event.wait(timeout=120):
+            self.log(f"Debug: scan didn't complete")
+        else:
+            self.exsiInstance.images_ready_event.clear()
+            self.transferScanData()
+            self.getLatestROIImage(stride=1)
+        trigger.finished.emit()
     @requireExsiConnection
     @requireAssetCalibration
     def doFgreScan(self):
-        if self.exsiInstance:
-            self.sendLoadProtocol("ConformalShimCalibration5")
-            self.sendSelTask()
-            self.sendActTask()
-            self.sendPatientTable()
-            self.sendScan()
-            if not self.exsiInstance.images_ready_event.wait(timeout=120):
-                self.log(f"Debug: scan didn't complete")
-            else:
-                self.exsiInstance.images_ready_event.clear()
-                self.transferScanData()
-                self.getLatestROIImage(stride=1)
+        if not self.exsiInstance:
+            return
+        trigger = Trigger()
+        trigger.finished.connect(self.updateROIImageDisplay)
+        kickoff_thread(self.fgreScanWork, args=(trigger,))
     
+    def recomputeCurrents(self):
+        self.triggerComputeShimCurrents()
+        self.updateShimImageAndStats()
+
+    @disableSlowButtonsTillDone
+    def waitBackgroundScan(self, trigger):
+        self.doBackgroundScansMarker.setChecked(False)
+        self.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
+        self.shimImages[0] = None
+        self.exsiInstance.images_ready_event.clear()
+        self.countScansCompleted(2)
+        self.doBackgroundScansMarker.setChecked(True)
+        self.log("DEBUG: just finished all the background scans")
+        self.computeBackgroundB0map()
+        # if this is a new background scan and basis maps were obtained, then compute the shim currents
+        self.triggerComputeShimCurrents()
+        trigger.finished.emit()
     @requireExsiConnection
     @requireShimConnection
     @requireAssetCalibration
     def doBackgroundScans(self):
         # Perform the background scans for the shim system.
-        def setMarker():
-            self.doBackgroundScansMarker.setChecked(False)
-            self.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
-            self.background = None
-            self.exsiInstance.images_ready_event.clear()
-            self.countScansCompleted(2)
-            self.doBackgroundScansMarker.setChecked(True)
-            self.log("DEBUG: just finished all the background scans")
-            self.computeBackgroundB0map()
-            # if this is a new background scan and basis maps were obtained, then compute the shim currents
-            self.triggerComputeShimCurrents()
-        t = threading.Thread(target=setMarker)
-        t.daemon = True
-        t.start()
-
-        self.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
-        self.doBasisPairScan()
-        # WAIT FOR THE BACKGROUND SCANS TO COMPLETE
+        trigger = Trigger()
+        def updateVals():
+            self.shimSliceIndexSlider.setEnabled(True)
+            self.shimSliceIndexEntry.setEnabled(True)
+            self.updateShimImageAndStats()
+        trigger.finished.connect(updateVals)
+        kickoff_thread(self.waitBackgroundScan, args=(trigger,))
+        self.queueBasisPairScan()
     
+
+    @disableSlowButtonsTillDone
+    def waitLoopCalibrtationScan(self, trigger):
+        self.doLoopCalibrationScansMarker.setChecked(False)
+        self.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
+        self.rawBasisB0maps = None
+        self.exsiInstance.images_ready_event.clear()
+        self.countScansCompleted(self.shimInstance.numLoops * 2)
+        self.log("DEBUG: just finished all the calibration scans")
+        self.doLoopCalibrationScansMarker.setChecked(True)
+        self.computeBasisB0maps()
+        # if this is a new background scan and basis maps were obtained, then compute the shim currents
+        self.triggerComputeShimCurrents()
+        trigger.finished.emit()
     @requireExsiConnection
     @requireShimConnection
     @requireAssetCalibration
     def doLoopCalibrationScans(self):
         """Perform all the calibration scans for each loop in the shim system."""
+        trigger = Trigger()
+        trigger.finished.connect(self.updateShimImageAndStats)
+        kickoff_thread(self.waitLoopCalibrtationScan, args=(trigger,))
+        def queueAll():
+            for i in range(self.shimInstance.numLoops):
+                self.queueCaliBasisPairScan(i)
+        kickoff_thread(queueAll)
 
-        # Perform the background scans for the shim system.
-        def setMarker():
-            self.doLoopCalibrationScansMarker.setChecked(False)
-            self.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
-            self.rawBasisB0maps = None
-            self.exsiInstance.images_ready_event.clear()
-            self.countScansCompleted(self.shimInstance.numLoops * 2)
-            self.log("DEBUG: just finished all the calibration scans")
-            self.doLoopCalibrationScansMarker.setChecked(True)
-            self.computeBasisB0maps()
-            # if this is a new background scan and basis maps were obtained, then compute the shim currents
-            self.triggerComputeShimCurrents()
-        t = threading.Thread(target=setMarker)
-        t.daemon = True
-        t.start()
-
-        for i in range(self.shimInstance.numLoops):
-            self.doCaliBasisPairScan(i)
 
     @requireShimConnection
     def shimSetAllCurrents(self):
         if not self.currentsComputedMarker.isChecked() or not self.currents:
             self.log("Debug: Need to perform background and loop calibration scans before setting currents.")
-            msg = self.createMessageBox("Error: Background And Loop Cal Scans not Done",
-                                        "Need to perform background and loop calibration scans before setting currents.", 
-                                        "You could set them manually if you wish to.")
+            msg = createMessageBox("Error: Background And Loop Cal Scans not Done",
+                                   "Need to perform background and loop calibration scans before setting currents.", 
+                                   "You could set them manually if you wish to.")
             msg.exec() 
             return # do nothing more
         self.setAllCurrentsMarker.setChecked(False)
         # require that currents have been computed, i.e. that background marker and loopcal marker are set
         # TODO(rob)
-        for i in range(self.shimInstance.numLoops):
-            self.shimSetCurrentManual(i%8, self.currents[i], i//8)
+        if self.currents[self.shimSliceIndex] is not None:
+            for i in range(self.shimInstance.numLoops):
+                self.shimSetCurrentManual(i%8, self.currents[self.shimSliceIndex][i], i//8)
         self.setAllCurrentsMarker.setChecked(True)
 
+
+    @disableSlowButtonsTillDone
+    def waitShimmedScans(self, trigger):
+        self.doShimmedScansMarker.setChecked(False)
+        self.shimImages[2] = None
+        self.exsiInstance.images_ready_event.clear()
+        self.countScansCompleted(2)
+        self.doShimmedScansMarker.setChecked(True)
+        self.computeShimmedB0Map()
+        self.evaluateShimImages()
+        trigger.finished.emit()
     @requireExsiConnection
     @requireShimConnection
     @requireAssetCalibration
     def doShimmedScans(self):
         """ Perform another set of scans now that it is shimmed """
         if not self.setAllCurrentsMarker.isChecked():
-                msg = self.createMessageBox("Note: Shim Process Not Performed",
-                                            "If you want correct shims, click above buttons and redo.", "")
+                msg = createMessageBox("Note: Shim Process Not Performed",
+                                       "If you want correct shims, click above buttons and redo.", "")
                 msg.exec() 
-        def setMarker():
-            self.doShimmedScansMarker.setChecked(False)
-            self.shimmedBackground = None
-            self.countScansCompleted(2)
-            self.doBackgroundScansMarker.setChecked(True)
-            self.computeShimmedB0Map()
-        t = threading.Thread(target=setMarker)
-        t.daemon = True
-        t.start()
- 
-        self.shimmedBackground = None
-        self.doBasisPairScan()
+        trigger = Trigger()
+        trigger.finished.connect(self.updateShimImageAndStats)
+        kickoff_thread(self.waitShimmedScans, args=(trigger,))
+        self.queueBasisPairScan()
 
     ##### EXSI CLIENT CONTROL FUNCTIONS #####   
 
@@ -768,35 +852,71 @@ class ExsiGui(QMainWindow):
 
     ##### SHIM COMPUTATION FUNCTIONS #####   
 
+    def computeMask(self, bases):
+        """compute the mask for the shim images."""
+        # TODO(rob) add in the user set ROI
+        self.finalMask = []
+        for i in range(self.shimImages[0].shape[1]):
+            self.finalMask.append(createMask(self.shimImages[0], bases, roi=None, sliceIndex=i))
+    
+    def evaluateShimImages(self):
+        """evaluate the shim images and store the stats in the stats array."""
+        for i in range(3):
+            if self.shimStats[i] is None:
+                self.shimStats[i] = [None for _ in range(self.shimImages[0].shape[1])]
+            if self.shimImages[i] is not None:
+                for j in range(self.shimImages[0].shape[1]):
+                    if i == 0:
+                        statsstr, std_og, mean_og, median_og = evaluate(self.shimImages[i][self.finalMask[j]], self.debugging)
+                        self.shimStats[i][j] = statsstr
+                    elif self.shimImages[i][j] is not None:
+                        statsstr, std_og, mean_og, median_og = evaluate(self.shimImages[i][j][self.finalMask[j]], self.debugging)
+                        self.shimStats[i][j] = statsstr
+
     def computeBackgroundB0map(self):
-        # assumes that you have just gotten background by doBasisPairScan
+        # assumes that you have just gotten background by queueBasisPairScan
         b0maps = compute_b0maps(1, self.localExamRootDir)
-        self.log(f"Debug: len background {len(b0maps)}")
-        self.background = b0maps[0]
+        self.shimImages[0] = b0maps[0]
+        self.validateShimSliceIndexControls(self.shimSliceIndex)
 
     def computeBasisB0maps(self):
-        # assumes that you have just gotten background by doBasisPairScan
+        # assumes that you have just gotten background by queueBasisPairScan
         self.rawBasisB0maps = compute_b0maps(self.shimInstance.numLoops, self.localExamRootDir)
-        self.log(f"Debug: len rawbasisB0maps {len(self.rawBasisB0maps)}")
     
-    def computeShimmedB0Map(self):
-        b0maps = compute_b0maps(1, self.localExamRootDir)
-        self.shimmedBackground = b0maps[0]
-
     def computeShimCurrents(self):
         # run whenever both backgroundB0Map and basisB0maps are computed or if one new one is obtained
-        self.basisB0maps = subtractBackground(self.background, self.rawBasisB0maps)
-        self.log(f"Debug: basisB0maps {len(self.basisB0maps)}")
+        self.basisB0maps = subtractBackground(self.shimImages[0], self.rawBasisB0maps)
+        self.computeMask(self.basisB0maps)
 
-        # TODO(rob): add the slider for slice index
-        self.roiMask = createMask(self.background, self.basisB0maps, roi=None, sliceIndex=30)
+        self.currents = [None for _ in range(self.shimImages[0].shape[1])]
+        for i in range(self.shimImages[0].shape[1]):
+            self.currents[i] = solveCurrents(self.shimImages[0], self.basisB0maps, self.finalMask[i], withLinGrad=self.withLinGradMarker.isChecked(), debug=self.debugging)
 
-        self.currents = solveCurrents(self.background, self.basisB0maps, self.roiMask)
+        # if all currents are none
+        if not all([c is None for c in self.currents]):
+            self.shimImages[1] = [self.shimImages[0].copy() for _ in range(self.shimImages[0].shape[1])]
+            for i in range(self.shimInstance.numLoops):
+                for j in range(self.shimImages[0].shape[1]):
+                    if self.currents[j] is not None:
+                        self.shimImages[1][j] += self.currents[j][i] * self.basisB0maps[i]
+                    else:
+                        self.shimImages[1][j] = None
+            self.currentsComputedMarker.setChecked(True)
+            self.validateShimSliceIndexControls(self.shimSliceIndex)
+        else:
+            # TODO(rob): can't make a message box in another thread i think
+            # make a message box saying currents could not compute
+            # msg = createMessageBox("Error: Could Not Solve For Currents",
+            #                        "Might be that they aren't getting set and least squares becomes lowrank.", "")
+            # msg.exec()
+            self.log("Error: Could not solve for currents. Look at error hopefully in output")
 
-        self.expShimmedBackground = self.background.copy()
-        self.log(f"Debug: numloops {self.shimInstance.numLoops} and len currents {len(self.currents)} and len basisB0maps {len(self.basisB0maps)}")
-        for i in range(self.shimInstance.numLoops):
-            self.expShimmedBackground += self.currents[i] * self.basisB0maps[i]
+    def computeShimmedB0Map(self):
+        b0maps = compute_b0maps(1, self.localExamRootDir)
+        if self.shimImages[2] is None:
+            self.shimImages[2] = [None for _ in range(self.shimImages[0].shape[1])]
+        self.shimImages[2][self.shimSliceIndex] = b0maps[0]
+        self.validateShimSliceIndexControls(self.shimSliceIndex)
 
     ##### SCAN DATA RELATED FUNCTIONS #####   
 
@@ -855,11 +975,9 @@ class ExsiGui(QMainWindow):
         latestDCMDir = listSubDirs(self.localExamRootDir)[-1]
         self.log(f"debug: latest dcm dir {latestDCMDir}")
         res = extractBasicImageData(latestDCMDir, stride, offset)
-        self.currentImageData, self.currentImageTE, self.currentImageOrientation = res
-        self.log(f"Debug: showing image with this shape and type: {self.currentImageData.shape}, {self.currentImageData.dtype}")
+        self.currentROIImageData, self.currentImageTE, self.currentImageOrientation = res
+        self.log(f"Debug: showing image with this shape and type: {self.currentROIImageData.shape}, {self.currentROIImageData.dtype}")
         self.log(f"Debug: showing image with TE and scan name: {self.currentImageTE}, {self.currentImageOrientation}")
-        roiSliceIndex = int(self.roiSliceEntry.text()) if self.roiSliceEntry.text() else 0
-        self.updateROIImageDisplay(roiSliceIndex)
 
     # TODO(rob): remove these because they seem useless
     def execBashCommand(self, cmd):
@@ -919,7 +1037,7 @@ class ExsiGui(QMainWindow):
             self.log("INFO: Stopping shim client instance", True)
             self.shimInstance.stop()
         self.log("INFO: Done with exsi instance", True)
-        self.log(f"DEBUG: self.backgroundset {self.background and self.background.shape}")
+        self.log(f"DEBUG: self.background set {self.shimImages[0].shape if self.shimImages[0] else None}")
         self.log(f"DEBUG: self.rawb0mapsset {self.rawBasisB0maps and len(self.rawBasisB0maps)} {self.rawBasisB0maps and self.rawBasisB0maps[0].shape}")
         self.log(f"DEBUG: self.currents computed {self.currents}")
         event.accept()
