@@ -66,6 +66,7 @@ class ExsiGui(QMainWindow):
         # the results which are used to compute shim values
         self.shimSliceIndex = 20 # default slice index to shim at
         self.roiSliceIndex = 20
+        self.roiDepth = None
 
         self.background = None
         self.expShimmedBackground = None
@@ -83,10 +84,9 @@ class ExsiGui(QMainWindow):
 
         # All the attributes for scan session that need to be None to start with.
         self.currentROIImageData = None
+        self.backgroundDCMdir = None
         self.roiEditorEnabled = False
-        self.roiX = .5
-        self.roiY = .5
-        self.roiZ = .5
+        self.roiSliderGranularity = 100
 
         self.currentImageTE = None
         self.currentImageOrientation = None
@@ -109,6 +109,7 @@ class ExsiGui(QMainWindow):
 
         self.centralTabWidget = QTabWidget()
         self.setCentralWidget(self.centralTabWidget)
+        self.centralTabWidget.currentChanged.connect(self.onTabSwitch)
 
         basicTab = QWidget()
         basicLayout = QVBoxLayout()
@@ -172,19 +173,12 @@ class ExsiGui(QMainWindow):
         self.roiSliceIndexSlider.valueChanged.connect(self.updateFromROISliceSlider)
         self.roiSliceIndexEntry.editingFinished.connect(self.updateFromSliceROIEntry)
 
-        viewWithAllROISliders = QHBoxLayout()
-        imageLayout.addLayout(viewWithAllROISliders)
-        viewWithBottomSlider = QVBoxLayout()
-
-        self.roiSliderY = self.addLabeledSlider(viewWithAllROISliders, "Y", orientation=Qt.Orientation.Vertical)
-        self.roiSliderY.valueChanged.connect(self.updateOval)
-
         # Setup QGraphicsView for image display
         self.roiScene = QGraphicsScene()
         self.roiView = QGraphicsView(self.roiScene)
         self.roiView.setFixedSize(512, 512)  # Set a fixed size for the view
         self.roiView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        viewWithBottomSlider.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
+        imageLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
         
         # roiPlaceholder text setup, and the actual pixmap item
         self.roiPlaceholderText = QGraphicsTextItem("Waiting for image data")
@@ -194,14 +188,25 @@ class ExsiGui(QMainWindow):
         self.roiScene.addItem(self.roiPixmapItem)
         self.roiPixmapItem.setZValue(1)  # Ensure pixmap item is above the roiPlaceholder text
 
-        self.roiSliderX = self.addLabeledSlider(viewWithBottomSlider, "X")
-        self.roiSliderX.valueChanged.connect(self.updateOval)
-        viewWithAllROISliders.addLayout(viewWithBottomSlider)
+        roiAdjustmentSliderLayout = QHBoxLayout()
+        roiSizeSliders = QVBoxLayout()
+        roiPositionSliders = QVBoxLayout()
+        imageLayout.addLayout(roiAdjustmentSliderLayout)
+        roiAdjustmentSliderLayout.addLayout(roiSizeSliders)
+        roiAdjustmentSliderLayout.addLayout(roiPositionSliders)
 
-        self.roiSliderZ = self.addLabeledSlider(viewWithAllROISliders, "Z", orientation=Qt.Orientation.Vertical)
-        self.roiSliderZ.valueChanged.connect(self.updateOval)
+        label = ["X", "Y", "Z"]
+        self.roiSizeSliders = [None for _ in range(3)]
+        self.roiPositionSliders = [None for _ in range(3)]
+        for i in range(3):
+            self.roiSizeSliders[i] = self.addLabeledSlider(roiSizeSliders, f"Size {label[i]}")
+            self.roiSizeSliders[i].valueChanged.connect(self.visualizeROI)
+            self.roiSizeSliders[i].setEnabled(False)
+            self.roiPositionSliders[i] = self.addLabeledSlider(roiPositionSliders, f"Center {label[i]}")
+            self.roiPositionSliders[i].valueChanged.connect(self.visualizeROI)
+            self.roiPositionSliders[i].setEnabled(False)
 
-        self.roiToggleButton = self.addButtonConnectedToFunction(imageLayout, "Toggle ROI", self.toggleROIEditor)
+        self.roiToggleButton = self.addButtonConnectedToFunction(imageLayout, "Enable ROI Editor", self.toggleROIEditor)
 
         # Controls and log layout
         controlsLayout = QVBoxLayout()
@@ -219,8 +224,26 @@ class ExsiGui(QMainWindow):
         self.reconnectExsiButton = self.addButtonConnectedToFunction(layout, "Reconnect EXSI", self.exsiInstance.connectExsi)
         self.doCalibrationScanButton = self.addButtonConnectedToFunction(layout, "Do Calibration Scan", self.doCalibrationScan)
         self.doFgreScanButton = self.addButtonConnectedToFunction(layout, "Do FGRE Scan", self.doFgreScan)
-        self.renderLatestDataButton = self.addButtonConnectedToFunction(layout, "Render Latest Data", self.doTransferDataAndGetImage)
+        self.renderLatestDataButton = self.addButtonConnectedToFunction(layout, "Render Data", self.doGetAndSetROIImage)
         self.slowButtons += [self.doCalibrationScanButton, self.doFgreScanButton, self.renderLatestDataButton]
+
+        # radio button group for selecting which roi view you want to see
+        roiVizButtonWindow = QWidget()
+        roiVizButtonLayout = QHBoxLayout()
+        roiVizButtonWindow.setLayout(roiVizButtonLayout)
+        self.roiVizButtonGroup = QButtonGroup(roiVizButtonWindow)
+        layout.addWidget(roiVizButtonWindow)
+
+        # Create the radio buttons
+        roiLatestDataButton = QRadioButton("Latest Data")
+        roiBackgroundButton = QRadioButton("Background")
+        roiLatestDataButton.setChecked(True)  # Default to latest data
+        roiBackgroundButton.setEnabled(False)  # Disable the background button for now
+        roiVizButtonLayout.addWidget(roiLatestDataButton)
+        roiVizButtonLayout.addWidget(roiBackgroundButton)
+        self.roiVizButtonGroup.addButton(roiLatestDataButton, 0)
+        self.roiVizButtonGroup.addButton(roiBackgroundButton, 1)
+        self.roiVizButtonGroup.idClicked.connect(self.toggleROIBackgroundImage)
 
         self.exsiLogOutput = QTextEdit()
         self.exsiLogOutput.setReadOnly(True)
@@ -347,7 +370,8 @@ class ExsiGui(QMainWindow):
         self.shimSliceIndexEntry.setEnabled(False)
 
         recomputeLayout = QHBoxLayout()
-        self.recomputeCurrents, self.withLinGradMarker = self.addButtonWithFuncAndMarker(recomputeLayout, "Shim: Recompute Currents", self.triggerComputeShimCurrents, "Linear Gradients?")
+        self.recomputeCurrentsButton, self.withLinGradMarker = self.addButtonWithFuncAndMarker(recomputeLayout, "Shim: Recompute Currents", self.recomputeCurrents, "Linear Gradients?")
+        self.slowButtons += [self.recomputeCurrentsButton]
         self.currentsDisplay = QLineEdit()
         self.currentsDisplay.setReadOnly(True)
         recomputeLayout.addWidget(self.currentsDisplay)
@@ -392,15 +416,15 @@ class ExsiGui(QMainWindow):
         layout.addLayout(labelEntryLayout)
         return entry
 
-    def addLabeledSlider(self, layout, labelStr, orientation=Qt.Orientation.Horizontal, minval=0, maxval=100):
+    def addLabeledSlider(self, layout, labelStr, orientation=Qt.Orientation.Horizontal):
         slider = QSlider(orientation)
         label = QLabel(labelStr)
         labelEntryLayout = QHBoxLayout()
         labelEntryLayout.addWidget(label)
         labelEntryLayout.addWidget(slider)
-        slider.setMinimum(minval)
-        slider.setMaximum(maxval)
-        slider.setValue((round(maxval+minval)//2) + minval)
+        slider.setMinimum(0)
+        slider.setMaximum(self.roiSliderGranularity)
+        slider.setValue((round(self.roiSliderGranularity)//2))
         layout.addLayout(labelEntryLayout)
         return slider
 
@@ -452,9 +476,11 @@ class ExsiGui(QMainWindow):
     def updateROIImageDisplay(self):
         if self.currentROIImageData is not None:
             self.validateROISliceIndexControls(self.roiSliceIndex)
-            sliceData = np.ascontiguousarray(self.currentROIImageData[self.roiSliceIndex])
             # Extract the slice and normalize it
-            sliceData = self.currentROIImageData[self.roiSliceIndex].astype(float)  # Convert to float for normalization
+            if self.roiVizButtonGroup.checkedId() == 1:
+                sliceData = np.ascontiguousarray(self.currentROIImageData[:,self.roiSliceIndex,:]).astype(float)
+            else:
+                sliceData = np.ascontiguousarray(self.currentROIImageData[self.roiSliceIndex]).astype(float)
             normalizedData = (sliceData - sliceData.min()) / (sliceData.max() - sliceData.min()) * 255
             displayData = normalizedData.astype(np.uint8)  # Convert to uint8
             # Create a 3-channel image from grayscale data
@@ -471,24 +497,89 @@ class ExsiGui(QMainWindow):
                     self.setViewImage(self.roiQImage)
         else:
             self.roiPlaceholderText.setVisible(True)
+
+    def validateROISliceIndexControls(self, value):
+        if self.currentROIImageData is not None:
+            # Update the slider range based on the new data
+            if self.roiVizButtonGroup.checkedId() == 1:
+                self.roiDepth = self.currentROIImageData.shape[1]
+            else:
+                self.roiDepth = self.currentROIImageData.shape[0]
+            self.roiSliceIndexSlider.setMinimum(0)
+            self.roiSliceIndexSlider.setMaximum(self.roiDepth - 1)
+            self.roiSliceIndexEntry.setValidator(QIntValidator(0, self.roiDepth - 1))
+
+            # If roiSliceIndex is None or out of new bounds, default to first slice
+            if value is None:
+                self.log("DEBUG: Invalid slice index, defaulting to 0")
+                self.roiSliceIndex = 0
+            elif value >= self.roiDepth:
+                self.log("DEBUG: Invalid slice index, defaulting to roi.depth - 1")
+                self.roiSliceIndex = self.roiDepth - 1
+            else:
+                self.roiSliceIndex = value
+        else:
+            self.roiSliceIndex = value
     
     def visualizeROI(self):
-        # visualize an oval overlayed on top of the current self.roiQImage
-        # Create a QPainter object and begin painting on the QImage
-        painter = QPainter(self.roiQImage)
+        # TODO add mote kinds of shapes and make this more scalable 
 
-        # Set the pen color to red and the brush to a transparent red
-        painter.setPen(QPen(QBrush(QColor(255, 0, 0, 255)), 1))
+        sizes = []
+        center = []
+        for i in range(3):
+            sizes.append(self.roiSizeSliders[i].value() / 100)
+            center.append(self.roiPositionSliders[i].value() / 100)
+        
+        self.XSizeEllipsoid = round((self.roiQImage.width() // 2) * sizes[0])
+        self.YSizeEllipsoid = round((self.roiQImage.height() // 2) * sizes[1])
+        self.ZSizeEllipsoid = round((self.roiDepth // 2) * sizes[2])
+        self.XCenterEllipsoid = round(self.roiQImage.width() * center[0])
+        self.YCenterEllipsoid = round(self.roiQImage.height() * center[1])
+        self.ZCenterEllipsoid = round(self.roiDepth * center[2])
 
-        # Draw an oval on the image. Adjust the parameters as needed for your specific use case
-        width_oval = round((self.roiQImage.width() // 2) * self.roiX)
-        height_oval = round((self.roiQImage.height() // 2) * self.roiY)
-        painter.drawEllipse(QPoint(self.roiQImage.width() / 2, self.roiQImage.height() / 2), width_oval, height_oval)
-        # End painting
-        painter.end()
+        self.log(f"DEBUG: Drawing oval on slice {self.roiSliceIndex}")
+        self.log(f"DEBUG: XCenter: {self.XCenterEllipsoid}, YCenter: {self.YCenterEllipsoid}, ZCenter: {self.ZCenterEllipsoid}")
+        self.log(f"DEBUG: XSize: {self.XSizeEllipsoid}, YSize: {self.YSizeEllipsoid}, ZSize: {self.ZSizeEllipsoid}")
 
-        # Now you can use the QImage as before
-        self.setViewImage(self.roiQImage)
+        # based on self.roiSliceIndex, we can determine what percent of SizeEllipsoid to use for the oval slice
+        offsetFromDepthCenter = abs(self.roiSliceIndex - self.ZCenterEllipsoid)
+        self.log(f"DEBUG: Offset from depth center: {offsetFromDepthCenter}")
+        if offsetFromDepthCenter <= self.ZSizeEllipsoid:
+            factor = (1 - (offsetFromDepthCenter**2 / self.ZSizeEllipsoid**2))
+            self.log(f"DEBUG: Factor for oval: {factor}")
+            width_oval = round(np.sqrt(self.XSizeEllipsoid**2 * factor))
+            height_oval = round(np.sqrt(self.YSizeEllipsoid**2 * factor))
+            self.log(f"DEBUG: Width: {width_oval}, Height: {height_oval}")
+
+            # visualize an oval overlayed on top of the current self.roiQImage
+            # Create a QPainter object and begin painting on the QImage
+            qImage = self.roiQImage.copy()
+            painter = QPainter(qImage)
+            # Set the pen color to red and the brush to a transparent red
+            painter.setPen(QPen(QBrush(QColor(255, 0, 0, 255)), 1))
+
+            # Draw an oval on the image. Adjust the parameters as needed for your specific use case
+            painter.drawEllipse(QPoint(self.XCenterEllipsoid, self.YCenterEllipsoid), width_oval, height_oval)
+            # End painting
+            painter.end()
+
+            # Now you can use the QImage as before
+            self.setViewImage(qImage)
+        else:
+            self.setViewImage(self.roiQImage)
+
+    def updateFromSliceROIEntry(self):
+        # Update the display based on the manual entry in QLineEdit
+        index = int(self.roiSliceIndexEntry.text()) if self.roiSliceIndexEntry.text() else 0
+        self.validateROISliceIndexControls(index)
+        self.roiSliceIndexSlider.setValue(self.roiSliceIndex)
+        self.updateROIImageDisplay()
+
+    def updateFromROISliceSlider(self, value):
+        # Directly update the line edit when the slider value changes
+        self.validateROISliceIndexControls(value)
+        self.roiSliceIndexEntry.setText(str(self.roiSliceIndex))
+        self.updateROIImageDisplay()
 
     # TODO(rob) should make this a single function since it is basically a copy of the other one
     def updateShimImageAndStats(self):
@@ -518,12 +609,12 @@ class ExsiGui(QMainWindow):
 
                 # show the background stat always:
                 if self.shimStats[0] is not None:
-                    text = self.shimstats[select][self.shimsliceindex]
+                    text = self.shimStats[select][self.shimSliceIndex]
                     if text is None:
                         text = "no stats available"
                 else:
                     text = "No stats available"
-                self.shimStatsText[0].setText(prefixs[0] + text)
+                self.shimStatText[0].setText("Background " + text)
 
                 prefixs = ["Est. ", "Actual "]
                 if select > 0:
@@ -550,36 +641,6 @@ class ExsiGui(QMainWindow):
                 return 
         self.shimView.viewport().setVisible(False)
         self.shimPlaceholderText.setVisible(True)
-
-    def validateROISliceIndexControls(self, value):
-        if self.currentROIImageData is not None:
-            # Update the slider range based on the new data
-            depth = self.currentROIImageData.shape[0]
-            self.roiSliceIndexSlider.setMinimum(0)
-            self.roiSliceIndexSlider.setMaximum(depth - 1)
-            self.roiSliceIndexEntry.setValidator(QIntValidator(0, depth - 1))
-
-            # If roiSliceIndex is None or out of new bounds, default to first slice
-            if value is None or value >= depth:
-                self.log("DEBUG: Invalid slice index, defaulting to 0")
-                self.roiSliceIndex = 0
-            else:
-                self.roiSliceIndex = value
-        else:
-            self.roiSliceIndex = value
-
-    def updateFromSliceROIEntry(self):
-        # Update the display based on the manual entry in QLineEdit
-        index = int(self.roiSliceIndexEntry.text()) if self.roiSliceIndexEntry.text() else 0
-        self.validateROISliceIndexControls(index)
-        self.roiSliceIndexSlider.setValue(self.roiSliceIndex)
-        self.updateROIImageDisplay()
-
-    def updateFromROISliceSlider(self, value):
-        # Directly update the line edit when the slider value changes
-        self.validateROISliceIndexControls(value)
-        self.roiSliceIndexEntry.setText(str(self.roiSliceIndex))
-        self.updateROIImageDisplay()
     
     def validateShimSliceIndexControls(self, value):
         if self.shimImages[0] is not None:
@@ -630,21 +691,22 @@ class ExsiGui(QMainWindow):
         self.shimImage = self.shimImages[id]
         self.updateShimImageAndStats()
     
-    def toggleROIEditor(self):
-        if self.roiEditorEnabled:
-            self.roiEditorEnabled = False
-            self.roiToggleButton.setText("Enable ROI Editor")
-        else:
-            self.roiEditorEnabled = True
-            self.roiToggleButton.setText("Disable ROI Editor")
-        self.updateROIImageDisplay()
-    
-    def updateOval(self):
-        self.roiX = self.roiSliderX.value() / 100
-        self.roiY = self.roiSliderY.value() / 100
-        self.roiY = self.roiSliderZ.value() / 100
-        self.updateROIImageDisplay()
+    def toggleROIBackgroundImage(self):
+        pass
 
+    def toggleROIEditor(self):
+        if self.roiVizButtonGroup.checkedId() == 1:
+            if self.roiEditorEnabled:
+                self.roiEditorEnabled = False
+                self.roiToggleButton.setText("Enable ROI Editor")
+            else:
+                for i in range(3):
+                    self.roiSizeSliders[i].setEnabled(True)
+                    self.roiPositionSliders[i].setEnabled(True)
+                self.roiEditorEnabled = True
+                self.roiToggleButton.setText("Disable ROI Editor")
+            self.updateROIImageDisplay()
+    
     ##### HELPER FUNCTIONS FOR EXSI CONTROL BUTTONS !!!! NO BUTTON SHOULD MAP TO THIS #####
     
     def queueBasisPairScanDetails(self):
@@ -704,6 +766,42 @@ class ExsiGui(QMainWindow):
             self.computeMask(self.rawBasisB0maps)
         self.evaluateShimImages()
     
+    def saveROIMask(self):
+        # make a mask the same shape as self.shimImages[0] based on the ellipsoid parameters
+        if self.roiEditorEnabled:
+            self.log(f"DEBUG: Saving ROI mask")
+            mask = np.zeros_like(self.shimImages[0], dtype=bool)
+            for z in range(mask.shape[1]):
+                for y in range(mask.shape[0]):
+                    for x in range(mask.shape[2]):
+                        if ((x - self.XCenterEllipsoid)**2 / self.XSizeEllipsoid**2 +
+                            (y - self.YCenterEllipsoid)**2 / self.YSizeEllipsoid**2 +
+                            (z - self.ZCenterEllipsoid)**2 / self.ZSizeEllipsoid**2) <= 1:
+                            # If it is, set the corresponding element in the mask to True
+                            mask[z, y, x] = True
+            self.roiMask = mask
+            # apply the mask to any of the shimImages that may exist
+            self.log(f"DEBUG: Mask shape: {self.roiMask.shape}, applying to shimImages")
+            # TODO(rob): make it so that this is not overriding the data, but rather just a copy for visualization
+            #       need to do this bc when the mask is changed, the og data needs to be remasked
+            if self.shimImages[0] is not None:
+                self.shimImages[0] = np.where(self.roiMask, self.shimImages[0], np.nan)
+                self.log(f"DEBUG: applied to background")
+            if self.shimImages[1] is not None:
+                for i in range(self.shimImages[0].shape[1]):
+                    self.log(f"DEBUG: applied to basis map {i}")
+                    self.shimImages[1][i] = np.where(self.roiMask, self.shimImages[1][i], np.nan)
+        else:
+            self.roiMask = None
+        
+
+    def onTabSwitch(self, index):
+        self.log(f"DEBUG: Switched to tab {index}")
+        if index == 1:
+            self.saveROIMask()
+            self.updateShimImageAndStats()
+
+                        
     ##### BUTTON FUNCTION DEFINITIONS; These are the functions that handle button click #####   
     # as such they should all be decorated in some fashion to not allow for operations to happen if they cannot
 
@@ -736,18 +834,23 @@ class ExsiGui(QMainWindow):
     #### More macro type button functions. These are slow, so disable other buttons while they are running, but unblock the rest of the gui ####
     
     @disableSlowButtonsTillDone
-    def transferDataAndGetImageWork(self, trigger):
-        self.transferScanData()
-        if os.path.exists(self.localExamRootDir):
-            self.getLatestROIImage(stride=1)
-            trigger.finished.emit()
+    def getAndSetROIImageWork(self, trigger):
+        if self.roiVizButtonGroup.checkedId() == 1:
+            self.log("Debug: Getting background image") 
+            self.getROIBackgound()
         else:
-            self.log("Debug: local directory has not been made yet...")
+            self.log("Debug: Getting latest image") 
+            self.transferScanData()
+            if os.path.exists(self.localExamRootDir):
+                self.getLatestData(stride=1)
+            else:
+                self.log("Debug: local directory has not been made yet...")
+        trigger.finished.emit()
     @requireExsiConnection
-    def doTransferDataAndGetImage(self):
+    def doGetAndSetROIImage(self):
         work = Trigger()
         work.finished.connect(self.updateROIImageDisplay)
-        kickoff_thread(self.transferDataAndGetImageWork, args=(work,))
+        kickoff_thread(self.getAndSetROIImageWork, args=(work,))
 
 
     @disableSlowButtonsTillDone
@@ -784,7 +887,7 @@ class ExsiGui(QMainWindow):
         else:
             self.exsiInstance.images_ready_event.clear()
             self.transferScanData()
-            self.getLatestROIImage(stride=1)
+            self.getLatestData(stride=1)
         trigger.finished.emit()
     @requireExsiConnection
     @requireAssetCalibration
@@ -795,6 +898,7 @@ class ExsiGui(QMainWindow):
         trigger.finished.connect(self.updateROIImageDisplay)
         kickoff_thread(self.fgreScanWork, args=(trigger,))
     
+    @disableSlowButtonsTillDone
     def recomputeCurrents(self):
         self.triggerComputeShimCurrents()
         self.updateShimImageAndStats()
@@ -807,6 +911,8 @@ class ExsiGui(QMainWindow):
         self.exsiInstance.images_ready_event.clear()
         self.countScansCompleted(2)
         self.doBackgroundScansMarker.setChecked(True)
+        self.roiVizButtonGroup.buttons()[1].setEnabled(True)
+        self.transferScanData()
         self.log("DEBUG: just finished all the background scans")
         self.computeBackgroundB0map()
         # if this is a new background scan and basis maps were obtained, then compute the shim currents
@@ -940,7 +1046,10 @@ class ExsiGui(QMainWindow):
         # TODO(rob) add in the user set ROI
         self.finalMask = []
         for i in range(self.shimImages[0].shape[1]):
-            self.finalMask.append(createMask(self.shimImages[0], bases, roi=None, sliceIndex=i))
+            if self.roiMask is not None:
+                self.finalMask.append(createMask(self.shimImages[0], bases, roi=self.roiMask[i], sliceIndex=i))
+            else:
+                self.finalMask.append(createMask(self.shimImages[0], bases, roi=None, sliceIndex=i))
     
     def evaluateShimImages(self):
         """evaluate the shim images and store the stats in the stats array."""
@@ -959,6 +1068,7 @@ class ExsiGui(QMainWindow):
     def computeBackgroundB0map(self):
         # assumes that you have just gotten background by queueBasisPairScan
         b0maps = compute_b0maps(1, self.localExamRootDir)
+        self.backgroundDCMdir = listSubDirs(self.localExamRootDir)[-1]
         self.shimImages[0] = b0maps[0]
         self.validateShimSliceIndexControls(self.shimSliceIndex)
 
@@ -1053,14 +1163,17 @@ class ExsiGui(QMainWindow):
             self.setGehcExamDataPath()
         self.execRsyncCommand(self.gehcExamDataPath + '/*', self.localExamRootDir)
 
-    def getLatestROIImage(self, stride=1, offset=0):
-        self.log(f"Debug: local exam root {self.localExamRootDir}") 
+    def getLatestData(self, stride=1, offset=0):
         latestDCMDir = listSubDirs(self.localExamRootDir)[-1]
-        self.log(f"debug: latest dcm dir {latestDCMDir}")
         res = extractBasicImageData(latestDCMDir, stride, offset)
         self.currentROIImageData, self.currentImageTE, self.currentImageOrientation = res
-        self.log(f"Debug: showing image with this shape and type: {self.currentROIImageData.shape}, {self.currentROIImageData.dtype}")
-        self.log(f"Debug: showing image with TE and scan name: {self.currentImageTE}, {self.currentImageOrientation}")
+    
+    def getROIBackgound(self):
+        self.log('Debug: extracting the background mag image')
+        res = extractBasicImageData(self.backgroundDCMdir, stride=3, offset=0)
+        self.log('Debug: done extracting the background mag image')
+        self.currentROIImageData = res[0]
+
 
     # TODO(rob): remove these because they seem useless
     def execBashCommand(self, cmd):
