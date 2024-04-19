@@ -46,18 +46,22 @@ def get_orientation(orientation_cosines):
         return None  # Orientation not standard or mixed
 
 def extractMetadata(dcm):
-    te = getattr(dcm, 'EchoTime')
-    # TODO(rob): implement the series descriptor, so you can append to the top of the visualizer
-    series_desc = getattr(dcm, 'SeriesDescription')
+    try:
+        te = getattr(dcm, 'EchoTime')
+        # TODO(rob): implement the series descriptor, so you can append to the top of the visualizer
+        series_desc = getattr(dcm, 'SeriesDescription')
 
-    # add orientation
-    # if 'Image Orientation (Patient)' in dcm:
-    #     orientation_cosines = dcm['Image Orientation (Patient)'].value
-    #     orientation = get_orientation(orientation_cosines)
-    # else:
-    orientation = None 
+        # add orientation
+        # if 'Image Orientation (Patient)' in dcm:
+        #     orientation_cosines = dcm['Image Orientation (Patient)'].value
+        #     orientation = get_orientation(orientation_cosines)
+        # else:
+        orientation = None 
 
-    return te, series_desc
+        return te, series_desc
+    except Exception as e:
+        print(f"Error extracting metadata: {e}")
+        return None, None
 
 def extractComplexImageData(dcmSeriesPath, threshFactor=.4):
     # NOTE: Assumes that Mag, I, Q images are interleaved in the series!!!

@@ -5,8 +5,8 @@ import json
 
 import signal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QIntValidator, QPainter
+from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QIntValidator, QPainter, QPen, QBrush, QColor
 
 # Import the custom client classes and util functions
 from exsi_client import exsi
@@ -83,8 +83,15 @@ class ExsiGui(QMainWindow):
 
         # All the attributes for scan session that need to be None to start with.
         self.currentROIImageData = None
+        self.roiEditorEnabled = False
+        self.roiX = .5
+        self.roiY = .5
+        self.roiZ = .5
+
         self.currentImageTE = None
         self.currentImageOrientation = None
+
+
         self.gehcExamDataPath = None
         self.localExamRootDir = None
 
@@ -158,12 +165,26 @@ class ExsiGui(QMainWindow):
         imageLayout = QVBoxLayout()
         basicLayout.addLayout(imageLayout)
 
+        # Slider for selecting slices
+        self.roiSliceIndexSlider, self.roiSliceIndexEntry = self.addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", QIntValidator(0, 0)) #TODO(rob): validate this after somehow....
+        self.roiSliceIndexSlider.setValue(self.roiSliceIndex)
+        self.roiSliceIndexEntry.setText(str(self.roiSliceIndex))
+        self.roiSliceIndexSlider.valueChanged.connect(self.updateFromROISliceSlider)
+        self.roiSliceIndexEntry.editingFinished.connect(self.updateFromSliceROIEntry)
+
+        viewWithAllROISliders = QHBoxLayout()
+        imageLayout.addLayout(viewWithAllROISliders)
+        viewWithBottomSlider = QVBoxLayout()
+
+        self.roiSliderY = self.addLabeledSlider(viewWithAllROISliders, "Y", orientation=Qt.Orientation.Vertical)
+        self.roiSliderY.valueChanged.connect(self.updateOval)
+
         # Setup QGraphicsView for image display
         self.roiScene = QGraphicsScene()
         self.roiView = QGraphicsView(self.roiScene)
         self.roiView.setFixedSize(512, 512)  # Set a fixed size for the view
         self.roiView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        imageLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
+        viewWithBottomSlider.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
         
         # roiPlaceholder text setup, and the actual pixmap item
         self.roiPlaceholderText = QGraphicsTextItem("Waiting for image data")
@@ -173,10 +194,14 @@ class ExsiGui(QMainWindow):
         self.roiScene.addItem(self.roiPixmapItem)
         self.roiPixmapItem.setZValue(1)  # Ensure pixmap item is above the roiPlaceholder text
 
-        # Slider for selecting slices
-        self.roiSliceIndexSlider, self.roiSliceIndexEntry = self.addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", QIntValidator(0, 0)) #TODO(rob): validate this after somehow....
-        self.roiSliceIndexSlider.valueChanged.connect(self.updateFromROISliceSlider)
-        self.roiSliceIndexEntry.editingFinished.connect(self.updateFromSliceROIEntry)
+        self.roiSliderX = self.addLabeledSlider(viewWithBottomSlider, "X")
+        self.roiSliderX.valueChanged.connect(self.updateOval)
+        viewWithAllROISliders.addLayout(viewWithBottomSlider)
+
+        self.roiSliderZ = self.addLabeledSlider(viewWithAllROISliders, "Z", orientation=Qt.Orientation.Vertical)
+        self.roiSliderZ.valueChanged.connect(self.updateOval)
+
+        self.roiToggleButton = self.addButtonConnectedToFunction(imageLayout, "Toggle ROI", self.toggleROIEditor)
 
         # Controls and log layout
         controlsLayout = QVBoxLayout()
@@ -255,14 +280,13 @@ class ExsiGui(QMainWindow):
         self.shimVizButtonGroup.idClicked.connect(self.toggleShimImage)
 
         # add another graphics scene visualizer
-        
         # Setup QGraphicsView for image display
         self.shimScene = QGraphicsScene()
         self.shimView = QGraphicsView(self.shimScene)
         leftLayout.addWidget(self.shimView, alignment=Qt.AlignmentFlag.AlignCenter)
         self.shimView.setFixedSize(512, 512)  # Set a fixed size for the view
         self.shimView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        
+
         # Placeholder text setup, and the actual pixmap item
         self.shimPlaceholderText = QGraphicsTextItem("Waiting for image data")
         self.shimPlaceholderText.setPos(50, 250)  # Position the text appropriately within the scene
@@ -368,6 +392,18 @@ class ExsiGui(QMainWindow):
         layout.addLayout(labelEntryLayout)
         return entry
 
+    def addLabeledSlider(self, layout, labelStr, orientation=Qt.Orientation.Horizontal, minval=0, maxval=100):
+        slider = QSlider(orientation)
+        label = QLabel(labelStr)
+        labelEntryLayout = QHBoxLayout()
+        labelEntryLayout.addWidget(label)
+        labelEntryLayout.addWidget(slider)
+        slider.setMinimum(minval)
+        slider.setMaximum(maxval)
+        slider.setValue((round(maxval+minval)//2) + minval)
+        layout.addLayout(labelEntryLayout)
+        return slider
+
     def addLabeledSliderAndEntry(self, layout, labelStr, entryvalidator):
         slider = QSlider(Qt.Orientation.Horizontal)
         label = QLabel(labelStr)
@@ -396,6 +432,23 @@ class ExsiGui(QMainWindow):
 
     ##### GRAPHICS FUNCTION DEFINITIONS #####   
 
+    def setViewImage(self, qImage, roi=True):
+        pixmap = QPixmap.fromImage(qImage)
+        if roi:
+            self.roiView.viewport().setVisible(True)
+            self.roiPixmapItem.setPixmap(pixmap)
+            self.roiScene.setSceneRect(self.roiPixmapItem.boundingRect())  # Adjust scene size to the pixmap's bounding rect
+            self.roiView.fitInView(self.roiPixmapItem, Qt.AspectRatioMode.KeepAspectRatio)  # Fit the view to the item
+            self.roiPlaceholderText.setVisible(False)
+            self.roiView.viewport().update()  # Force the viewport to update
+        else:
+            self.shimView.viewport().setVisible(True)
+            self.shimPixmapItem.setPixmap(pixmap)
+            self.shimScene.setSceneRect(self.shimPixmapItem.boundingRect())  # Adjust scene size to the pixmap's bounding rect
+            self.shimView.fitInView(self.shimPixmapItem, Qt.AspectRatioMode.KeepAspectRatio)  # Fit the view to the item
+            self.shimPlaceholderText.setVisible(False)
+            self.shimView.viewport().update()  # Force the viewport to update
+    
     def updateROIImageDisplay(self):
         if self.currentROIImageData is not None:
             self.validateROISliceIndexControls(self.roiSliceIndex)
@@ -404,21 +457,38 @@ class ExsiGui(QMainWindow):
             sliceData = self.currentROIImageData[self.roiSliceIndex].astype(float)  # Convert to float for normalization
             normalizedData = (sliceData - sliceData.min()) / (sliceData.max() - sliceData.min()) * 255
             displayData = normalizedData.astype(np.uint8)  # Convert to uint8
-            height, width = displayData.shape
-            bytesPerLine = displayData.strides[0] 
-            qImage = QImage(displayData.data, width, height, bytesPerLine, QImage.Format.Format_Grayscale8)
-            if qImage.isNull():
+            # Create a 3-channel image from grayscale data
+            rgbData = np.stack((displayData,)*3, axis=-1)
+            height, width, _ = rgbData.shape
+            bytesPerLine = rgbData.strides[0] 
+            self.roiQImage = QImage(rgbData.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
+            if self.roiQImage.isNull():
                 self.log("Debug: Failed to create QImage")
             else:
-                pixmap = QPixmap.fromImage(qImage)
-                self.roiPixmapItem.setPixmap(pixmap)
-                self.roiScene.setSceneRect(self.roiPixmapItem.boundingRect())  # Adjust scene size to the pixmap's bounding rect
-                self.roiView.fitInView(self.roiPixmapItem, Qt.AspectRatioMode.KeepAspectRatio)  # Fit the view to the item
-                self.roiPlaceholderText.setVisible(False)
-                self.roiView.viewport().update()  # Force the viewport to update
-
+                if self.roiEditorEnabled:
+                    self.visualizeROI()
+                else:
+                    self.setViewImage(self.roiQImage)
         else:
             self.roiPlaceholderText.setVisible(True)
+    
+    def visualizeROI(self):
+        # visualize an oval overlayed on top of the current self.roiQImage
+        # Create a QPainter object and begin painting on the QImage
+        painter = QPainter(self.roiQImage)
+
+        # Set the pen color to red and the brush to a transparent red
+        painter.setPen(QPen(QBrush(QColor(255, 0, 0, 255)), 1))
+
+        # Draw an oval on the image. Adjust the parameters as needed for your specific use case
+        width_oval = round((self.roiQImage.width() // 2) * self.roiX)
+        height_oval = round((self.roiQImage.height() // 2) * self.roiY)
+        painter.drawEllipse(QPoint(self.roiQImage.width() / 2, self.roiQImage.height() / 2), width_oval, height_oval)
+        # End painting
+        painter.end()
+
+        # Now you can use the QImage as before
+        self.setViewImage(self.roiQImage)
 
     # TODO(rob) should make this a single function since it is basically a copy of the other one
     def updateShimImageAndStats(self):
@@ -480,8 +550,6 @@ class ExsiGui(QMainWindow):
                 return 
         self.shimView.viewport().setVisible(False)
         self.shimPlaceholderText.setVisible(True)
-
-    # Making sure that the sliders and entries stay in sync!
 
     def validateROISliceIndexControls(self, value):
         if self.currentROIImageData is not None:
@@ -562,6 +630,21 @@ class ExsiGui(QMainWindow):
         self.shimImage = self.shimImages[id]
         self.updateShimImageAndStats()
     
+    def toggleROIEditor(self):
+        if self.roiEditorEnabled:
+            self.roiEditorEnabled = False
+            self.roiToggleButton.setText("Enable ROI Editor")
+        else:
+            self.roiEditorEnabled = True
+            self.roiToggleButton.setText("Disable ROI Editor")
+        self.updateROIImageDisplay()
+    
+    def updateOval(self):
+        self.roiX = self.roiSliderX.value() / 100
+        self.roiY = self.roiSliderY.value() / 100
+        self.roiY = self.roiSliderZ.value() / 100
+        self.updateROIImageDisplay()
+
     ##### HELPER FUNCTIONS FOR EXSI CONTROL BUTTONS !!!! NO BUTTON SHOULD MAP TO THIS #####
     
     def queueBasisPairScanDetails(self):

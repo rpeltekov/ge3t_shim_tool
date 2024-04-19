@@ -10,15 +10,15 @@ class exsi:
     def __init__(self, host, port, exsiProduct, exsiPasswd, shimZeroFunc, shimCurrentFunc, output_file='scanner_log.txt', debugging=False):
         self.debugging = debugging
     
+        self.host = host
+        self.port = port
         self.exsiProduct = exsiProduct
         self.exsiPasswd = exsiPasswd
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.settimeout(1)  # Set a timeout of 1 second
-        self.s.connect((host, port))
-        print(f"INFO EXSI CLIENT: Socket connected")
 
         self.counter = 0
-        self.running = True
+        self.running = False
         self.ready_event = threading.Event()
         self.images_ready_event = threading.Event()
         self.connected_ready_event = threading.Event()
@@ -41,16 +41,22 @@ class exsi:
         with open(self.output_file, 'w'):
             pass
 
-        self.start_receiving_thread()
-        self.start_command_processor_thread()  # Start the command processor thread
-
         self.connectExsi()
 
     def connectExsi(self):
-        # these trigger the connected event!
-        self.send(f'ConnectToScanner product={self.exsiProduct} passwd={self.exsiPasswd}')
-        self.send('NotifyEvent all=on')
-        self.send('GetExamInfo')
+        try:
+            self.s.connect((self.host, self.port))
+            print(f"INFO EXSI CLIENT: Socket connected")
+            # these trigger the connected event!
+            self.running = True
+            self.start_receiving_thread()
+            self.start_command_processor_thread()  # Start the command processor thread
+
+            self.send(f'ConnectToScanner product={self.exsiProduct} passwd={self.exsiPasswd}')
+            self.send('NotifyEvent all=on')
+            self.send('GetExamInfo')
+        except Exception as e:
+            print("ERROR EXSI CLIENT: Connection refused. Please check the host and port.\n Error: ", e)
 
     def start_command_processor_thread(self):
         def process_commands():
@@ -245,9 +251,10 @@ class exsi:
         self.running = False
         # print out command queue if it is not empty
         self.clear_command_queue()
-        self.s.shutdown(socket.SHUT_RDWR)
-        self.s.close()
-        print("INFO EXSI CLIENT: socket closed successfully. bye.")
+        if self.running:
+            self.s.shutdown(socket.SHUT_RDWR)
+            self.s.close()
+            print("INFO EXSI CLIENT: socket closed successfully. bye.")
     
     def __del__(self):
         self.stop()
