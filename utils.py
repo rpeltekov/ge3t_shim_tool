@@ -93,7 +93,12 @@ def disableSlowButtonsTillDone(func):
     def wrapper(self, *args, **kwargs):
         for button in self.slowButtons:
             button.setEnabled(False)
-        func(self, *args)
+        # TODO(rob): figure out a better way to handle args generically, and also debug print
+        print(f"DEBUG: {func.__name__} called with len args  < 1: {len(args) < 1}, args: {args}")
+        if len(args) < 1 or args[0] == False:
+            func(self)
+        else:
+            func(self, *args)
         for button in self.slowButtons:
             button.setEnabled(True)
     return wrapper

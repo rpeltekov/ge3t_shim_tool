@@ -63,7 +63,7 @@ def extractMetadata(dcm):
         print(f"Error extracting metadata: {e}")
         return None, None
 
-def extractComplexImageData(dcmSeriesPath, threshFactor=.4):
+def extractComplexImageData(dcmSeriesPath, threshFactor=.5):
     # NOTE: Assumes that Mag, I, Q images are interleaved in the series!!!
     # Process a dicom directory and pulls out masked complex data
     paths = listDicomFiles(dcmSeriesPath)

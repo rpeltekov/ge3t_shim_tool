@@ -22,10 +22,14 @@ class exsi:
         self.ready_event = threading.Event()
         self.images_ready_event = threading.Event()
         self.connected_ready_event = threading.Event()
+        self.no_failures = threading.Event() # for when command fails. 
+        self.no_failures.set() # set to true initially
         self.command_queue = queue.Queue()  # Command queue
         self.output_file = output_file
         self.last_command = ""
         self.examNumber = None
+        self.ogCenterFreq = None
+        self.newCenterFreq = None
         self.patientName = None
 
         # task queue, if a protocol is loaded so that we can run tasks in order
@@ -150,9 +154,16 @@ class exsi:
                         print(f"EXSI CLIENT DEBUG: Command {self.last_command} failed, clearing command queue.")
                         self.clear_command_queue()  # Clear the queue on failure
                         self.clearShimQueue() # Clear the shim queue too on failure
+
+                        # signal that error occured. only cleared here, set by gui when ready to go again
+                        self.no_failures.clear()
+                        # set these so that gui can resume control and not sit in wait
+                        self.ready_event.set()
+                        self.images_ready_event.set()
                     if is_ready:
                         self.ready_event.set()
                     if images_ready:
+                        print(f"EXSI CLIENT DEBUG: setting images_ready_event") 
                         self.images_ready_event.set()
             except socket.timeout:
                 continue
@@ -175,6 +186,10 @@ class exsi:
         ready = False 
         images_ready = False
 
+        if "images available" in msg:
+            print(f"EXSI CLIENT DEBUG: Images are ready. in msg: {msg}")
+            images_ready = True
+
         # TODO(rob): this is kind of a confuzzling place to put this contradiction
         if "fail" in msg:
             success = False # Command failed
@@ -185,8 +200,6 @@ class exsi:
             ready = "ConnectToScanner=ok" in msg
         elif self.last_command.startswith("Scan"):
             ready = "acquisition=complete" in msg
-            if "images available" in msg:
-                images_ready = True
         elif self.last_command.startswith("ActivateTask"):
             ready = "ActivateTask=ok" in msg
         elif self.last_command.startswith("SelectTask"):
@@ -204,14 +217,22 @@ class exsi:
                 print(f"EXSI CLIENT DEBUG: Task keys found in message: ", taskKeys)
                 for task in taskKeys:
                     self.task_queue.put(task)
-            else:
-                print(f"EXSI CLIENT DEBUG: No task keys found in message: {msg}")
+            # else:
+            #     print(f"EXSI CLIENT DEBUG: No task keys found in message: {msg}")
         elif self.last_command.startswith("SetCVs"):
             ready = "SetCVs=ok" in msg
-        elif self.last_command.startswith("Prescan auto"):
-            ready = "scanner=idle" in msg
-        elif self.last_command.startswith("Prescan skip"):
-            ready = "Prescan=ok" in msg
+        elif self.last_command.startswith("Prescan"):
+            if "auto" in self.last_command:
+                ready = "scanner=idle" in msg
+            elif "skip" in self.last_command:
+                ready = "Prescan=ok" in msg
+            elif "values=hide" in self.last_command: # for setting the center frequency
+                ready = "Prescan=ok" in msg
+                # extract the new center frequency from the message
+                pattern = r"cf=(\d+)"
+                match = re.search(pattern, msg)
+                if match:
+                    self.newCenterFreq = match.group(1)
         elif self.last_command.startswith("GetExamInfo"):
             if "GetExamInfo=ok" in msg:
                 ref = "0020,0010="
@@ -223,10 +244,21 @@ class exsi:
                 self.patientName = msg[patientnamestart:patientnameend]
                 ready = True
                 self.connected_ready_event.set() # This only needs to happen once
+        elif self.last_command.startswith("GetPrescanValues"):
+            if "GetPrescanValues=ok" in msg:
+                pattern = r"cf=(\d+)"
+                match = re.search(pattern, msg)
+                if match:
+                    self.ogCenterFreq = match.group(1)
+                else:
+                    print("EXSI CLIENT DEBUG: Center frequency not found in message.")
+                ready = True
         elif self.last_command.startswith("SetGrxSlices"):
             ready = True
-        elif self.last_command.startswith("SetGrxsomething...."):
+        elif self.last_command.startswith("SetRxsomething...."): #TODO: what is this command?
             ready = True
+        elif self.last_command.startswith("SetShimValues"):
+            ready = "SetShimValues=ok" in msg
         elif self.last_command.startswith("Help"):
             ready = "Help" in msg
             

@@ -57,12 +57,11 @@ def createMask(background, bases, roi, sliceIndex=-1, orientation=Orientation.CO
     if background is not None:
         masks.append(~np.isnan(background))
     if bases is not None:
-        print(f"debug: {bases}")
         for base in bases:
             masks.append(~np.isnan(base))
-    # then add roi if there is one
+    # then add roi if there is one; should already be boolean mask
     if roi is not None:
-        masks.append(~np.isnan(roi))
+        masks.append(roi)
     # consider slice only if it is provided TODO(rob): add other orientations more nicely
     if sliceIndex >= 0: #and orientation == Orientation.CORONAL:
         if background is not None:
@@ -85,60 +84,58 @@ def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False):
     # make a copy so that we can work with that instead
     bases = []
 
+    bases.append(np.ones(background.shape)) # add the constant basis for center frequency calc
     for base in rawBases:
         bases.append(base.copy())
 
-    # Add in the linear gradients if that is desired
-    if withLinGrad:
-        addNaiveLinGrad(bases)
-
-    # vectorize using the final mask
     vectorized = []
     for i in range(len(bases)):
         masked = bases[i][mask] 
-        if debug:
-            print(f"DEBUG: vector {i} has nans : {np.isnan(masked).any()}")
+        # if debug:
+            # print(f"DEBUG: vector {i} has nans : {np.isnan(masked).any()}")
         vectorized.append(masked)
     
-    # Craft the Least Squar Problem
+    # Craft the constrained Least Squares Problem
     A = np.stack(vectorized, axis=1)
     y = background[mask]
 
     if y.size == 0 or A.size == 0:
         return None
 
-    if debug:
+    # if debug:
         # print and check if A or y still have nans
-        print(f"DEBUG: A has nans: {np.isnan(A).any()}, y has nans: {np.isnan(y).any()}")
-        print(f"DEBUG: A.shape {A.shape}, A.T.shape {A.T.shape}, y.shape: {y.shape}")
+        # print(f"DEBUG: A has nans: {np.isnan(A).any()}, y has nans: {np.isnan(y).any()}")
+        # print(f"DEBUG: A.shape {A.shape}, A.T.shape {A.T.shape}, y.shape: {y.shape}")
+        # print(f"DEBUG: y.mean: {np.mean(y)}, y.std: {np.std(y)} y.min: {np.min(y)}, y.max: {np.max(y)}")
     p = 2 * A.T @ A
     q = 2 * y.T @ A
 
-    # forming the constraint vectors depends on if there are lin gradient components
-    if withLinGrad:
-        g = np.vstack((np.eye(len(rawBases)+3), -np.eye(len(rawBases)+3)))
-        h = 2 * np.ones(len(rawBases))
-        h = np.concatenate((h, np.ones(3)*3.2934))
-        h = np.concatenate((h, h))
+    # constraint vectors
+    g = np.vstack((np.eye(len(rawBases)+1), -np.eye(len(rawBases)+1))) # plus 4 for cf and 3 lin grads
+    h = np.ones(1)*2000 # for the center frequency in hz
+    if withLinGrad: # constraints change based on the presence of linear gradients
+        h = np.concatenate((h, np.ones(3)*3.2934)) # for the linear gradients 
+        h = np.concatenate((h, 2 * np.ones(len(rawBases)-3)))
     else:
-        g = np.vstack((np.eye(len(rawBases)), -np.eye(len(rawBases))))
-        h = 2 * np.ones(len(rawBases))
-        h = np.concatenate((h, h))
+        h = np.concatenate((h, 2 * np.ones(len(rawBases))))
+    h = np.concatenate((h, h)) # double it for the negative constraints
     
-    if debug:
-        print(f"A.shape {A.shape}, y.shape: {y.shape}")
-        print(f"p.shape {p.shape}, q.shape: {y.shape}, g.shape {g.shape}, h.shape: {h.shape}")
-        print(p)
-        print(g)
-        print(h)
+    # TODO(rob): fix these debug comments to show less
+    # if debug:
+        # print(f"A.shape {A.shape}, y.shape: {y.shape}")
+        # print(f"p.shape {p.shape}, q.shape: {y.shape}, g.shape {g.shape}, h.shape: {h.shape}")
+        # print(p)
+        # print(g)
+        # print(h)
     
     try:
+        solvers.options['show_progress'] = False
         res = solvers.qp(matrix(p), matrix(q), matrix(g), matrix(h))
     except ValueError as e:
         print(f"DEBUG: Error in solving the problem: {e}")
         return None
 
-    return res['x']
+    return np.array(res['x']).flatten()
 
 def evaluate(d, debug=False):
     """ Evaluate a vector with basic stats"""
@@ -147,6 +144,6 @@ def evaluate(d, debug=False):
     median_og = np.nanmedian(d)
     
     stats = f" RESULTS (Hz):\nSt. Dev: {std_og:.3f}\nMean: {mean_og:.3f}\nMedian: {median_og:.3f}"
-    if debug:
-        print(stats)
+    # if debug:
+    #     print(stats)
     return stats, std_og, mean_og, median_og
