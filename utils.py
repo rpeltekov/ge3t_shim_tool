@@ -179,8 +179,8 @@ def saveHistogramsOverlayed(directory, titles, data, slice_index):
     """Save a histogram of the data of background, estimation, actual overlayed at slice or over Full ROI to a file."""
     fig, ax = plt.subplots()
     print(F"DEBUG: saving histogram overlayed with data shape: {data.shape}, index: {slice_index}")
-    if data.shape[0] == 3:
-        for i in range(len(data)):
+    if data.shape[0] == 3 or data.shape[0] == 2: # either background and est ; or back, est, and actual
+        for i in range(data.shape[0]):
             makesurenottooverwrite = data[i].flatten()
             #ignore nans:
             makesurenottooverwrite = makesurenottooverwrite[~np.isnan(makesurenottooverwrite)]

@@ -64,6 +64,7 @@ class ExsiGui(QMainWindow):
 
         self.shimSliceIndex = 20
         self.roiSliceIndex = 20
+        self.shimDeltaTE = 500
     
         self.shimData = [None, None, None] # where the data actually gets saved to 
         self.shimImages = [None, None, None] # what is being displayed. copys and modifies shimData whenever ROI changes
@@ -398,14 +399,17 @@ class ExsiGui(QMainWindow):
         self.doShimProcedureLabel = QLabel("SHIM OPERATIONS")
         rightLayout.addWidget(self.doShimProcedureLabel)
 
-        self.shimDeltaTESlider, self.shimDeltaTEEntry = self.addLabeledSliderAndEntry(rightLayout, "Delta TE (us): ", QIntValidator(0, 500))
-        self.shimDeltaTESlider.setValue(500)
+        self.shimDeltaTESlider, self.shimDeltaTEEntry = self.addLabeledSliderAndEntry(rightLayout, "Delta TE (us): ", QIntValidator(100, 500))
+        self.shimDeltaTESlider.setMaximum(self.shimDeltaTE)
+        self.shimDeltaTESlider.setMinimum(100)
+        self.shimDeltaTESlider.setValue(self.shimDeltaTE)
+        self.shimDeltaTEEntry.setText(str(self.shimDeltaTE))
         self.shimDeltaTESlider.valueChanged.connect(self.updateFromShimDeltaTESlider)
         self.shimDeltaTEEntry.editingFinished.connect(self.updateFromShimDeltaTEEntry)
         self.slowButtons += [self.shimDeltaTESlider, self.shimDeltaTEEntry]
 
         # macro for obtaining background scans
-        self.doBackgroundScansButton, self.doBackgroundScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Perform Background B0map Scans", self.doBackgroundScans)
+        self.doBackgroundScansButton, self.doBackgroundScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Obtain Background B0map", self.doBackgroundScans)
         loopCalibrationLayout = QHBoxLayout()
         rightLayout.addLayout(loopCalibrationLayout)
         self.withLinGradMarker = QCheckBox("With Lin. Gradients")
@@ -413,17 +417,17 @@ class ExsiGui(QMainWindow):
         self.withLinGradMarker.setEnabled(False)
         self.withLinGradMarker.setChecked(True)
         loopCalibrationLayout.addWidget(self.withLinGradMarker)
-        self.doLoopCalibrationScansButton, self.doLoopCalibrationScansMarker = self.addButtonWithFuncAndMarker(loopCalibrationLayout, "Shim: Perform Loop Calibration B0map Scans", self.doLoopCalibrationScans)
+        self.doLoopCalibrationScansButton, self.doLoopCalibrationScansMarker = self.addButtonWithFuncAndMarker(loopCalibrationLayout, "Shim: Obtain Loop Basis B0maps", self.doLoopCalibrationScans)
         setAllCurrentsLayout = QHBoxLayout() # need a checkbox in front of the set all currents button to show that the currents have been computed
         rightLayout.addLayout(setAllCurrentsLayout)
         self.currentsComputedMarker = QCheckBox("Currents Computed?")
         self.currentsComputedMarker.setEnabled(False)
         self.currentsComputedMarker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         setAllCurrentsLayout.addWidget(self.currentsComputedMarker)
-        self.setAllCurrentsButton, self.setAllCurrentsMarker = self.addButtonWithFuncAndMarker(setAllCurrentsLayout, "Selected Slice: Set Optimal Currents", self.shimSetAllCurrents)
-        self.doShimmedScansButton, self.doShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Selected Slice: Perform Shimmed Scan", self.doShimmedScans)
+        self.setAllCurrentsButton, self.setAllCurrentsMarker = self.addButtonWithFuncAndMarker(setAllCurrentsLayout, "Current Selected Slice: Set Optimal Currents", self.shimSetAllCurrents)
+        self.doShimmedScansButton, self.doShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Current Selected Slice: Perform Shimmed Scan", self.doShimmedScans)
 
-        self.doAllShimmedScansButton, self.doAllShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Perform Shimmed Scan for Every Slice", self.doAllShimmedScans)
+        self.doAllShimmedScansButton, self.doAllShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shimmed Scan ALL Slices", self.doAllShimmedScans)
         self.slowButtons += [self.doBackgroundScansButton, self.doLoopCalibrationScansButton, self.setAllCurrentsButton, self.doShimmedScansButton, self.doAllShimmedScansButton]
 
         # Add the log output here
@@ -880,6 +884,7 @@ class ExsiGui(QMainWindow):
         self.setShimImages()
 
     def setShimImages(self):
+        """apply the mask to the shimImages and set the shimImage to the correct slice index."""
         if self.shimData[0] is not None:
             if self.finalMask is not None and self.finalMask[self.shimSliceIndex] is not None:
                 #TODO(rob): make shimImages[0] also 2d mtx, and not have it so dynamic that this function needs to be run every time...
@@ -1478,7 +1483,7 @@ class ExsiGui(QMainWindow):
                     saveHistogram(imageTypeSaveDir, labels[i], data[i], -1)
             
             # save the histogram  all images overlayed
-            if data[0] is not None and data[1] is not None and data[2] is not None:
+            if data[0] is not None and data[1] is not None:
                 self.log(f"Debug: saving overlayed volume stats for {labels[i]}")
                 data = np.array(data) # convert to numpy array
                 # for the volume entirely
