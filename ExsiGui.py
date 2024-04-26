@@ -1164,11 +1164,11 @@ class ExsiGui(QMainWindow):
             # setting the loop shim currents
             for i in range(self.shimInstance.numLoops):
                 if self.withLinGradMarker.isChecked():
-                    self.log(f"DEBUG: Setting currents for loop {i} to {self.currents[self.shimSliceIndex][i+4]:.3f}")
-                    self.shimSetCurrentManual(i%8, self.currents[self.shimSliceIndex][i+4], i//8)
+                    self.log(f"DEBUG: Setting currents for loop {i} to {self.currents[idx][i+4]:.3f}")
+                    self.shimSetCurrentManual(i%8, self.currents[idx][i+4], i//8)
                 else:
-                    self.log(f"DEBUG: Setting currents for loop {i} to {self.currents[self.shimSliceIndex][i+1]:.3f}")
-                    self.shimSetCurrentManual(i%8, self.currents[self.shimSliceIndex][i+1], i//8)
+                    self.log(f"DEBUG: Setting currents for loop {i} to {self.currents[idx][i+1]:.3f}")
+                    self.shimSetCurrentManual(i%8, self.currents[idx][i+1], i//8)
 
             self.log(f"DEBUG: now waiting to actually perform the slice")
             if self.countScansCompleted(2):
