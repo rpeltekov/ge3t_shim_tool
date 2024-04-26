@@ -142,8 +142,9 @@ def evaluate(d, debug=False):
     std_og = np.nanstd(d)
     mean_og = np.nanmean(d)
     median_og = np.nanmedian(d)
+    rmse = np.sqrt(np.nanmean(d**2))
     
-    stats = f" RESULTS (Hz):\nSt. Dev: {std_og:.3f}\nMean: {mean_og:.3f}\nMedian: {median_og:.3f}"
+    stats = f" RESULTS (Hz):\nSt. Dev: {std_og:.3f}\nMean: {mean_og:.3f}\nMedian: {median_og:.3f}\nRMSE: {rmse:.3f}"
     # if debug:
     #     print(stats)
-    return stats, std_og, mean_og, median_og
+    return stats, [std_og, mean_og, median_og, rmse]
