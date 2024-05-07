@@ -1,58 +1,9 @@
-import threading, time, os
-from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
+import threading, os, json
 from matplotlib import pyplot as plt
+import sys, paramiko, subprocess, os, threading, re
 import numpy as np
 
-class LogMonitorThread(QThread):
-    update_log = pyqtSignal(str)
-
-    def __init__(self, filename, parent=None):
-        super(LogMonitorThread, self).__init__(parent)
-        self.filename = filename
-        self.running = True
-
-    def run(self):
-        self.running = True
-        with open(self.filename, 'r') as file:
-            # Move to the end of the file
-            file.seek(0, 2)
-            while self.running:
-                line = file.readline()
-                if not line:
-                    time.sleep(0.1)  # Sleep briefly to allow for a stop check
-                    continue
-                self.update_log.emit(line)
-
-    def stop(self):
-        self.running = False
-
-class ImageViewer(QGraphicsView):
-    def __init__(self, parent=None, label=None):
-        super(ImageViewer, self).__init__(parent)
-        self.scene = QGraphicsScene(self)
-        self.setScene(self.scene)
-        self.pixmap_item = None
-        self.label = label
-
-    def set_pixmap(self, pixmap):
-        if self.pixmap_item is None:
-            self.pixmap_item = self.scene.addPixmap(pixmap)
-        else:
-            self.pixmap_item.setPixmap(pixmap)
-        self.pixmap = pixmap.toImage()
-
-    def mouseMoveEvent(self, event):
-        if self.pixmap_item is not None:
-            point = self.mapToScene(event.pos())
-            x, y = int(point.x()), int(point.y())
-            if 0 <= x < self.pixmap.width() and 0 <= y < self.pixmap.height():
-                color = self.pixmap.pixelColor(x, y)
-                # Assuming there's a method to update a status bar or label:
-                self.label.setText(f"Coordinates: ({x}, {y}) - Grayscale Value: {color.value()}")
-            else:
-                self.label.clear()
+from guiUtils import *
 
 def load_config(filename):
     with open(filename, 'r') as file:
@@ -62,15 +13,6 @@ def kickoff_thread(target, args=()):
     t = threading.Thread(target=target, args=args)
     t.daemon = True
     t.start()
-
-def createMessageBox(title, text, informativeText):
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Icon.Warning)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setInformativeText(informativeText)
-    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    return msg
 
 def requireShimConnection(func):
     """Decorator to check if the EXSI client is connected before running a function."""
@@ -119,25 +61,6 @@ def requireAssetCalibration(func):
             return
         return func(self)
     return wrapper
-
-
-def disableSlowButtonsTillDone(func):
-    """Decorator to wrap around slow button functions to disable other buttons until the function is done."""
-    def wrapper(self, *args, **kwargs):
-        for button in self.slowButtons:
-            button.setEnabled(False)
-        # TODO(rob): figure out a better way to handle args generically, and also debug print
-        print(f"DEBUG: {func.__name__} called with len args  < 1: {len(args) < 1}, args: {args}")
-        if len(args) < 1 or args[0] == False:
-            func(self)
-        else:
-            func(self, *args)
-        for button in self.slowButtons:
-            button.setEnabled(True)
-    return wrapper
-
-class Trigger(QObject):
-    finished = pyqtSignal()
 
 
 def saveImage(directory, title, b0map, slice_index, vmax, white=False):
@@ -232,3 +155,89 @@ def saveHistogramsOverlayed(directory, titles, data, slice_index):
     fig.savefig(output_path, bbox_inches='tight', transparent=False)
     plt.close(fig)
     return output_path
+
+    ##### OTHER METHODS ######
+
+def execSSHCommand(host, hvPort, hvUser, hvPassword, command):
+    # Initialize the SSH client
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Automatically add host key
+    try:
+        client.connect(hostname=host, port=hvPort, username=hvUser, password=hvPassword)
+        stdin, stdout, stderr = client.exec_command(command)
+        return stdout.readlines()  # Read the output of the command
+
+    except Exception as e:
+        print(f"Connection or command execution failed: {e}")
+    finally:
+        client.close()
+
+def execRsyncCommand(hvPass, hvUser, host, source, destination):
+    # Construct the SCP command using sshpass
+    cmd = f"sshpass -p {hvPass} rsync -avz {hvUser}@{host}:{source} {destination}"
+
+    # Execute the SCP command
+    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Wait for the command to complete
+    stdout, stderr = process.communicate()
+    
+    # Check if the command was executed successfully
+    if process.returncode == 0:
+        return stdout.decode('utf-8')
+    else:
+        return f"Error: {stderr.decode('utf-8')}"
+
+
+def getLastSetGradients(host, hvPort, hvUser, hvPassword):
+    # Command to extract the last successful setting of the shim currents
+    print(f"Debug: attempting to find the last used gradients")
+    command = "tail -n 100 /usr/g/service/log/Gradient.log | grep 'Prescn Success: AS Success' | tail -n 1"
+    output = execSSHCommand(host, hvPort, hvUser, hvPassword, command)
+    if output:
+        last_line = output[0].strip()
+        # Use regex to find X, Y, Z values
+        match = re.search(r'X =\s+(-?\d+)\s+Y =\s+(-?\d+)\s+Z =\s+(-?\d+)', last_line)
+        if match:
+            gradients = [int(match.group(i)) for i in range(1, 4)]
+            print(f"Debug: found that linear shims got set to {gradients}")
+            return gradients
+        print(f"DEBUG: no matches!")
+    print(f"Debug: failed to find the last used gradients")
+    return None
+
+def setGehcExamDataPath(exam_number, host, hvPort, hvUser, hvPassword):
+    output = execSSHCommand(host, hvPort, hvUser, hvPassword, "pathExtract "+exam_number)
+    if output:
+        last_line = output[-1].strip() 
+    else:
+        return None
+    parts = last_line.split("/")
+    return os.path.join("/", *parts[:7])
+
+def execBashCommand(cmd):
+    # Execute the bash command
+    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Wait for the command to complete
+    stdout, stderr = process.communicate()
+    
+    # Check if the command was executed successfully
+    if process.returncode == 0:
+        return stdout.decode('utf-8')
+    else:
+        return f"Error: {stderr.decode('utf-8')}"
+
+def execSCPCommand(hvPass, hvUser, hvHost, source, destination):
+    # Construct the SCP command using sshpass
+    cmd = f"sshpass -p {hvPass} scp -r {hvUser}@{hvHost}:{source} {destination}"
+
+    # Execute the SCP command
+    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Wait for the command to complete
+    stdout, stderr = process.communicate()
+
+    # Check if the command was executed successfully
+    if process.returncode == 0:
+        return stdout.decode('utf-8')
+    else:
+        return f"Error: {stderr.decode('utf-8')}"
+

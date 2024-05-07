@@ -5,7 +5,7 @@ import numpy as np
 import json
 
 import signal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton, QGraphicsItem
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton, QGraphicsItem
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QIntValidator, QPainter, QPen, QBrush, QColor
 
@@ -15,6 +15,7 @@ from shim_client import shim
 from dicomUtils import *
 from shimCompute import *
 from utils import *
+from guiUtils import *
 
 warnings.filterwarnings("ignore", "Degrees of freedom <= 0 for slice", RuntimeWarning)
 warnings.filterwarnings("ignore", "Mean of empty slice", RuntimeWarning)
@@ -197,7 +198,7 @@ class ExsiGui(QMainWindow):
         basicLayout.addLayout(imageLayout)
 
         # Slider for selecting slices
-        self.roiSliceIndexSlider, self.roiSliceIndexEntry = self.addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", QIntValidator(0, 0)) #TODO: validate this after somehow....
+        self.roiSliceIndexSlider, self.roiSliceIndexEntry = addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", QIntValidator(0, 0)) #TODO: validate this after somehow....
         self.roiSliceIndexSlider.setValue(self.roiSliceIndex)
         self.roiSliceIndexEntry.setText(str(self.roiSliceIndex))
         self.roiSliceIndexSlider.valueChanged.connect(self.updateFromROISliceSlider)
@@ -231,14 +232,14 @@ class ExsiGui(QMainWindow):
         self.roiSizeSliders = [None for _ in range(3)]
         self.roiPositionSliders = [None for _ in range(3)]
         for i in range(3):
-            self.roiSizeSliders[i] = self.addLabeledSlider(roiSizeSliders, f"Size {label[i]}")
+            self.roiSizeSliders[i] = addLabeledSlider(roiSizeSliders, f"Size {label[i]}", self.roiSliderGranularity)
             self.roiSizeSliders[i].valueChanged.connect(self.visualizeROI)
             self.roiSizeSliders[i].setEnabled(False)
-            self.roiPositionSliders[i] = self.addLabeledSlider(roiPositionSliders, f"Center {label[i]}")
+            self.roiPositionSliders[i] = addLabeledSlider(roiPositionSliders, f"Center {label[i]}", self.roiSliderGranularity)
             self.roiPositionSliders[i].valueChanged.connect(self.visualizeROI)
             self.roiPositionSliders[i].setEnabled(False)
 
-        self.roiToggleButton = self.addButtonConnectedToFunction(imageLayout, "Enable ROI Editor", self.toggleROIEditor)
+        self.roiToggleButton = addButtonConnectedToFunction(imageLayout, "Enable ROI Editor", self.toggleROIEditor)
 
         # Controls and log layout
         controlsLayout = QVBoxLayout()
@@ -253,10 +254,10 @@ class ExsiGui(QMainWindow):
 
     def setupExsiButtonsAndLog(self, layout):
         # create the buttons
-        self.reconnectExsiButton = self.addButtonConnectedToFunction(layout, "Reconnect EXSI", self.exsiInstance.connectExsi)
-        self.doCalibrationScanButton = self.addButtonConnectedToFunction(layout, "Do Calibration Scan", self.doCalibrationScan)
-        self.doFgreScanButton = self.addButtonConnectedToFunction(layout, "Do FGRE Scan", self.doFgreScan)
-        self.renderLatestDataButton = self.addButtonConnectedToFunction(layout, "Render Data", self.doGetAndSetROIImage)
+        self.reconnectExsiButton = addButtonConnectedToFunction(layout, "Reconnect EXSI", self.exsiInstance.connectExsi)
+        self.doCalibrationScanButton = addButtonConnectedToFunction(layout, "Do Calibration Scan", self.doCalibrationScan)
+        self.doFgreScanButton = addButtonConnectedToFunction(layout, "Do FGRE Scan", self.doFgreScan)
+        self.renderLatestDataButton = addButtonConnectedToFunction(layout, "Render Data", self.doGetAndSetROIImage)
         self.slowButtons += [self.doCalibrationScanButton, self.doFgreScanButton, self.renderLatestDataButton]
 
         # radio button group for selecting which roi view you want to see
@@ -359,7 +360,7 @@ class ExsiGui(QMainWindow):
         leftLayout.addWidget(shimStatTextLabel)
         leftLayout.addLayout(statsLayout)
 
-        self.saveResultsButton = self.addButtonConnectedToFunction(leftLayout, "Save results", self.saveResults)
+        self.saveResultsButton = addButtonConnectedToFunction(leftLayout, "Save results", self.saveResults)
 
         # RIGHT SIDE
 
@@ -376,23 +377,23 @@ class ExsiGui(QMainWindow):
         # add the calibrate zero and get current buttons to left of manualShimLayout
         manualShimButtonsLayout = QVBoxLayout()
         manualShimLayout.addLayout(manualShimButtonsLayout)
-        self.shimCalChannelsButton = self.addButtonConnectedToFunction(manualShimButtonsLayout, "Calibrate Shim Channels", self.shimInstance.shimCalibrate)
-        self.shimZeroButton        = self.addButtonConnectedToFunction(manualShimButtonsLayout, "Zero Shim Channels", self.shimInstance.shimZero)
-        self.shimGetCurrentsButton = self.addButtonConnectedToFunction(manualShimButtonsLayout, "Get Shim Currents", self.shimInstance.shimGetCurrent)
+        self.shimCalChannelsButton = addButtonConnectedToFunction(manualShimButtonsLayout, "Calibrate Shim Channels", self.shimInstance.shimCalibrate)
+        self.shimZeroButton        = addButtonConnectedToFunction(manualShimButtonsLayout, "Zero Shim Channels", self.shimInstance.shimZero)
+        self.shimGetCurrentsButton = addButtonConnectedToFunction(manualShimButtonsLayout, "Get Shim Currents", self.shimInstance.shimGetCurrent)
 
         # add the vertical region for channel input, current input, and set current button right of manualShimLayout
         setChannelCurrentShimLayout = QVBoxLayout()
         manualShimLayout.addLayout(setChannelCurrentShimLayout)
-        self.shimManualChannelEntry = self.addEntryWithLabel(setChannelCurrentShimLayout, "Channel Index (Int): ", QIntValidator(0, self.shimInstance.numLoops-1))
-        self.shimManualCurrenEntry = self.addEntryWithLabel(setChannelCurrentShimLayout, "Current (A): ", QDoubleValidator(-2.4, 2.4, 2))
-        self.shimManualSetCurrentButton = self.addButtonConnectedToFunction(setChannelCurrentShimLayout, "Shim: Set Currents", self.shimInstance.shimSetCurrent)
+        self.shimManualChannelEntry = addEntryWithLabel(setChannelCurrentShimLayout, "Channel Index (Int): ", QIntValidator(0, self.shimInstance.numLoops-1))
+        self.shimManualCurrenEntry = addEntryWithLabel(setChannelCurrentShimLayout, "Current (A): ", QDoubleValidator(-2.4, 2.4, 2))
+        self.shimManualSetCurrentButton = addButtonConnectedToFunction(setChannelCurrentShimLayout, "Shim: Set Currents", self.shimInstance.shimSetCurrent)
         self.shimManualSetCurrentButton.setEnabled(False) # TODO: fix this / connect it idk
         self.slowButtons += [self.shimCalChannelsButton, self.shimZeroButton, self.shimGetCurrentsButton, self.shimManualSetCurrentButton]
 
         # ACTUAL SHIM OPERATIONS START
         # Just add the rest of the things to the vertical layout.
         # add a label and select for the slice index
-        self.shimSliceIndexSlider, self.shimSliceIndexEntry = self.addLabeledSliderAndEntry(rightLayout, "Slice Index (Int): ", QIntValidator(0, 2147483647)) #TODO: validate this after somehow....
+        self.shimSliceIndexSlider, self.shimSliceIndexEntry = addLabeledSliderAndEntry(rightLayout, "Slice Index (Int): ", QIntValidator(0, 2147483647)) #TODO: validate this after somehow....
         self.shimSliceIndexSlider.valueChanged.connect(self.updateFromShimSliceIndexSlider)
         self.shimSliceIndexEntry.editingFinished.connect(self.updateFromShimSliceIndexEntry)
         self.shimSliceIndexSlider.setValue(self.shimSliceIndex)
@@ -401,7 +402,7 @@ class ExsiGui(QMainWindow):
         self.shimSliceIndexEntry.setEnabled(False)
 
         recomputeLayout = QHBoxLayout()
-        self.recomputeCurrentsButton = self.addButtonConnectedToFunction(recomputeLayout, "Shim: Recompute Currents", self.recomputeCurrentsAndView)
+        self.recomputeCurrentsButton = addButtonConnectedToFunction(recomputeLayout, "Shim: Recompute Currents", self.recomputeCurrentsAndView)
         self.slowButtons += [self.recomputeCurrentsButton]
         self.currentsDisplay = QLineEdit()
         self.currentsDisplay.setReadOnly(True)
@@ -411,7 +412,7 @@ class ExsiGui(QMainWindow):
         self.doShimProcedureLabel = QLabel("SHIM OPERATIONS; Default linear gradient shims = _")
         rightLayout.addWidget(self.doShimProcedureLabel)
 
-        self.shimDeltaTESlider, self.shimDeltaTEEntry = self.addLabeledSliderAndEntry(rightLayout, "Delta TE (us): ", QIntValidator(100, 500))
+        self.shimDeltaTESlider, self.shimDeltaTEEntry = addLabeledSliderAndEntry(rightLayout, "Delta TE (us): ", QIntValidator(100, 500))
         self.shimDeltaTESlider.setMaximum(self.shimDeltaTE)
         self.shimDeltaTESlider.setMinimum(100)
         self.shimDeltaTESlider.setValue(self.shimDeltaTE)
@@ -419,7 +420,7 @@ class ExsiGui(QMainWindow):
         self.shimDeltaTESlider.valueChanged.connect(self.updateFromShimDeltaTESlider)
         self.shimDeltaTEEntry.editingFinished.connect(self.updateFromShimDeltaTEEntry)
 
-        self.shimCalCurrentSlider, self.shimCalCurrentEntry = self.addLabeledSliderAndEntry(rightLayout, "Calibration Current (A): ", QDoubleValidator(.1, 2, 2))
+        self.shimCalCurrentSlider, self.shimCalCurrentEntry = addLabeledSliderAndEntry(rightLayout, "Calibration Current (A): ", QDoubleValidator(.1, 2, 2))
         self.shimCalCurrentSlider.setMaximum(190)
         self.shimCalCurrentSlider.setMinimum(0)
         self.shimCalCurrentSlider.setValue(self.shimCalCurrent*100-10)
@@ -429,7 +430,7 @@ class ExsiGui(QMainWindow):
 
         self.slowButtons += [self.shimDeltaTESlider, self.shimDeltaTEEntry, self.shimCalCurrentSlider, self.shimCalCurrentEntry]
         # macro for obtaining background scans
-        self.doBackgroundScansButton, self.doBackgroundScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shim: Obtain Background B0map", self.doBackgroundScans)
+        self.doBackgroundScansButton, self.doBackgroundScansMarker = addButtonWithFuncAndMarker(rightLayout, "Shim: Obtain Background B0map", self.doBackgroundScans)
         loopCalibrationLayout = QHBoxLayout()
         rightLayout.addLayout(loopCalibrationLayout)
         self.withLinGradMarker = QCheckBox("With Lin. Gradients")
@@ -437,18 +438,18 @@ class ExsiGui(QMainWindow):
         self.withLinGradMarker.setEnabled(False)
         self.withLinGradMarker.setChecked(True)
         loopCalibrationLayout.addWidget(self.withLinGradMarker)
-        self.doLoopCalibrationScansButton, self.doLoopCalibrationScansMarker = self.addButtonWithFuncAndMarker(loopCalibrationLayout, "Shim: Obtain Loop Basis B0maps", self.doLoopCalibrationScans)
+        self.doLoopCalibrationScansButton, self.doLoopCalibrationScansMarker = addButtonWithFuncAndMarker(loopCalibrationLayout, "Shim: Obtain Loop Basis B0maps", self.doLoopCalibrationScans)
         setAllCurrentsLayout = QHBoxLayout() # need a checkbox in front of the set all currents button to show that the currents have been computed
         rightLayout.addLayout(setAllCurrentsLayout)
         self.currentsComputedMarker = QCheckBox("Currents Computed?")
         self.currentsComputedMarker.setEnabled(False)
         self.currentsComputedMarker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         setAllCurrentsLayout.addWidget(self.currentsComputedMarker)
-        self.setAllCurrentsButton, self.setAllCurrentsMarker = self.addButtonWithFuncAndMarker(setAllCurrentsLayout, "Current Selected Slice: Set Optimal Currents", self.shimSetAllCurrents)
-        self.doShimmedScansButton, self.doShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Current Selected Slice: Perform Shimmed Scan", self.doShimmedScans)
-        self.doEvalApplShimsButton = self.addButtonConnectedToFunction(rightLayout, "Evaluate Applied Shims", self.doEvalAppliedShims)
+        self.setAllCurrentsButton, self.setAllCurrentsMarker = addButtonWithFuncAndMarker(setAllCurrentsLayout, "Current Selected Slice: Set Optimal Currents", self.shimSetAllCurrents)
+        self.doShimmedScansButton, self.doShimmedScansMarker = addButtonWithFuncAndMarker(rightLayout, "Current Selected Slice: Perform Shimmed Scan", self.doShimmedScans)
+        self.doEvalApplShimsButton = addButtonConnectedToFunction(rightLayout, "Evaluate Applied Shims", self.doEvalAppliedShims)
 
-        self.doAllShimmedScansButton, self.doAllShimmedScansMarker = self.addButtonWithFuncAndMarker(rightLayout, "Shimmed Scan ALL Slices", self.doAllShimmedScans)
+        self.doAllShimmedScansButton, self.doAllShimmedScansMarker = addButtonWithFuncAndMarker(rightLayout, "Shimmed Scan ALL Slices", self.doAllShimmedScans)
         self.slowButtons += [self.doBackgroundScansButton, self.doLoopCalibrationScansButton, self.setAllCurrentsButton, self.doShimmedScansButton, self.doEvalApplShimsButton, self.doAllShimmedScansButton]
 
         # Add the log output here
@@ -476,76 +477,20 @@ class ExsiGui(QMainWindow):
         self.basisView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
 
         # add a slider for selecting the basis function
-        self.basisFunctionSlider, self.basisFunctionEntry = self.addLabeledSliderAndEntry(leftLayout, "Basis Function Index (Int): ", QIntValidator(0, self.shimInstance.numLoops + 3 - 1))
+        self.basisFunctionSlider, self.basisFunctionEntry = addLabeledSliderAndEntry(leftLayout, "Basis Function Index (Int): ", QIntValidator(0, self.shimInstance.numLoops + 3 - 1))
         self.basisFunctionEntry.editingFinished.connect(self.updateFromBasisFunctionEntry)
         self.basisFunctionSlider.valueChanged.connect(self.updateFromBasisFunctionSlider)
         self.basisFunctionSlider.setValue(self.basisFunctionIndex)
         self.basisFunctionEntry.setText(str(self.basisFunctionIndex))
 
         # add a label and select for the slice index
-        self.basisSliceIndexSlider, self.basisSliceIndexEntry = self.addLabeledSliderAndEntry(leftLayout, "Slice Index (Int): ", QIntValidator(0, 2147483647)) #TODO: validate this after
+        self.basisSliceIndexSlider, self.basisSliceIndexEntry = addLabeledSliderAndEntry(leftLayout, "Slice Index (Int): ", QIntValidator(0, 2147483647)) #TODO: validate this after
         self.basisSliceIndexSlider.valueChanged.connect(self.updateFromBasisSliceIndexSlider)
         self.basisSliceIndexEntry.editingFinished.connect(self.updateFromBasisSliceIndexEntry)
         self.basisSliceIndexSlider.setValue(self.basisSliceIndex)
         self.basisSliceIndexEntry.setText(str(self.basisSliceIndex))
         # RIGHT
         #TODO later
-
-
-
-    def addButtonConnectedToFunction(self, layout, buttonName, function):
-        button = QPushButton(buttonName)
-        button.clicked.connect(function)
-        layout.addWidget(button)
-        return button
-
-    def addEntryWithLabel(self, layout, labelStr, entryvalidator):
-        label = QLabel(labelStr)
-        entry = QLineEdit()
-        entry.setValidator(entryvalidator)
-        labelEntryLayout = QHBoxLayout()
-        labelEntryLayout.addWidget(label)
-        labelEntryLayout.addWidget(entry)
-        layout.addLayout(labelEntryLayout)
-        return entry
-
-    def addLabeledSlider(self, layout, labelStr, orientation=Qt.Orientation.Horizontal):
-        slider = QSlider(orientation)
-        label = QLabel(labelStr)
-        labelEntryLayout = QHBoxLayout()
-        labelEntryLayout.addWidget(label)
-        labelEntryLayout.addWidget(slider)
-        slider.setMinimum(0)
-        slider.setMaximum(self.roiSliderGranularity)
-        slider.setValue((round(self.roiSliderGranularity)//2))
-        layout.addLayout(labelEntryLayout)
-        return slider
-
-    def addLabeledSliderAndEntry(self, layout, labelStr, entryvalidator):
-        slider = QSlider(Qt.Orientation.Horizontal)
-        label = QLabel(labelStr)
-        entry = QLineEdit()
-        entry.setValidator(entryvalidator)
-        labelEntryLayout = QHBoxLayout()
-        labelEntryLayout.addWidget(label)
-        labelEntryLayout.addWidget(slider)
-        labelEntryLayout.addWidget(entry)
-        layout.addLayout(labelEntryLayout)
-        return slider, entry
-    
-    def addButtonWithFuncAndMarker(self, layout, buttonName, function, markerName="Done?"):
-        hlayout = QHBoxLayout()
-        layout.addLayout(hlayout)
-        marker = QCheckBox(markerName)
-        marker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        if markerName == "Done?":
-            marker.setEnabled(False)
-            button = self.addButtonConnectedToFunction(hlayout, buttonName, function)
-            hlayout.addWidget(marker)
-        else:
-            hlayout.addWidget(marker)
-            button = self.addButtonConnectedToFunction(hlayout, buttonName, function)
-        return button, marker
 
     ##### GRAPHICS FUNCTION DEFINITIONS #####   
 
@@ -1133,7 +1078,7 @@ class ExsiGui(QMainWindow):
             self.triggerComputeShimCurrents()
             self.setShimImages()
             self.validateShimSliceIndexControls(self.shimSliceIndex) # to re compute scaling
-            self.getLastSuccessgradients()
+            self.gradients = getLastSetGradients(self.config['host'], self.config['hvPort'], self.config['hvUser'], self.config['hvPassword'])
         else:
             self.log("Error: Scans didn't complete")
             self.exsiInstance.images_ready_event.clear()
@@ -1488,73 +1433,15 @@ class ExsiGui(QMainWindow):
 
     ##### SCAN DATA RELATED FUNCTIONS #####   
 
-    # TODO: move most of these transfer functions into their own UTIL file. dataUtils.py or smth
-    def execSSHCommand(self, command):
-        # Initialize the SSH client
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Automatically add host key
-        try:
-            client.connect(hostname=self.config['host'], port=self.config['hvPort'], username=self.config['hvUser'], password=self.config['hvPassword'])
-            stdin, stdout, stderr = client.exec_command(command)
-            return stdout.readlines()  # Read the output of the command
-
-        except Exception as e:
-            self.log(f"Connection or command execution failed: {e}")
-        finally:
-            client.close()
-
-    def execRsyncCommand(self, source, destination):
-        # Construct the SCP command using sshpass
-        cmd = f"sshpass -p {self.config['hvPassword']} rsync -avz {self.config['hvUser']}@{self.config['host']}:{source} {destination}"
-
-        # Execute the SCP command
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Wait for the command to complete
-        stdout, stderr = process.communicate()
-        
-        # Check if the command was executed successfully
-        if process.returncode == 0:
-            return stdout.decode('utf-8')
-        else:
-            return f"Error: {stderr.decode('utf-8')}"
-
-    def getLastSuccessgradients(self):
-        # Command to extract the last successful setting of the shim currents
-        self.log(f"Debug: attempting to find the last used gradients")
-        command = "tail -n 100 /usr/g/service/log/Gradient.log | grep 'Prescn Success: AS Success' | tail -n 1"
-        output = self.execSSHCommand(command)
-        if output:
-            last_line = output[0].strip()
-            # Use regex to find X, Y, Z values
-            match = re.search(r'X =\s+(-?\d+)\s+Y =\s+(-?\d+)\s+Z =\s+(-?\d+)', last_line)
-            if match:
-                gradients = [int(match.group(i)) for i in range(1, 4)]
-                self.log(f"Debug: found that linear shims got set to {gradients}")
-                self.linShims = gradients
-                return True
-            self.log(f"DEBUG: no matches!")
-        self.log(f"Debug: failed to find the last used gradients")
-        return False
-            
-    def setGehcExamDataPath(self):
+    def transferScanData(self):
+        self.log(f"Debug: initiating transfer using rsync.")
         if self.exsiInstance.examNumber is None:
             self.log("Error: No exam number found in the exsi client instance.")
             return
-        exam_number = self.exsiInstance.examNumber
-        output = self.execSSHCommand("pathExtract "+exam_number)
-        if output:
-            last_line = output[-1].strip() 
-        else:
-            return
-        parts = last_line.split("/")
-        self.gehcExamDataPath = os.path.join("/", *parts[:7])
-        self.log(f"Debug: obtained exam data path: {self.gehcExamDataPath}")
-
-    def transferScanData(self):
-        self.log(f"Debug: initiating transfer using rsync.")
         if self.gehcExamDataPath is None:
-            self.setGehcExamDataPath()
-        self.execRsyncCommand(self.gehcExamDataPath + '/*', self.localExamRootDir)
+            self.gehcExamDataPath = setGehcExamDataPath(self.exsiInstance.examNumber, self.config['host'], self.config['hvPort'], self.config['hvUser'], self.config['hvPassword'])
+            self.log(f"Debug: obtained exam data path: {self.gehcExamDataPath}")
+        self.execRsyncCommand(self.config['hvPassword'], self.config['hvUser'], self.config['host'], self.gehcExamDataPath + '/*', self.localExamRootDir)
 
     def getLatestData(self, stride=1, offset=0):
         latestDCMDir = listSubDirs(self.localExamRootDir)[-1]
@@ -1678,37 +1565,6 @@ class ExsiGui(QMainWindow):
             np.save(os.path.join(self.resultsDir, 'basis.npy'), bases)
             self.log(f"Debug: done saving results to {self.resultsDir}")
         kickoff_thread(helper)
-
-
-    ##### OTHER METHODS ######
-
-    # TODO: remove these because they seem useless
-    def execBashCommand(self, cmd):
-        # Execute the bash command
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Wait for the command to complete
-        stdout, stderr = process.communicate()
-        
-        # Check if the command was executed successfully
-        if process.returncode == 0:
-            return stdout.decode('utf-8')
-        else:
-            return f"Error: {stderr.decode('utf-8')}"
-
-    def execSCPCommand(self, source, destination):
-        # Construct the SCP command using sshpass
-        cmd = f"sshpass -p {self.config['hvPassword']} scp -r {self.config['hvUser']}@{self.config['host']}:{source} {destination}"
-
-        # Execute the SCP command
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Wait for the command to complete
-        stdout, stderr = process.communicate()
-
-        # Check if the command was executed successfully
-        if process.returncode == 0:
-            return stdout.decode('utf-8')
-        else:
-            return f"Error: {stderr.decode('utf-8')}"
 
     def log(self, msg, forceStdOut=False):
         # record a timestamp and prepend to the message
