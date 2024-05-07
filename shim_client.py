@@ -21,7 +21,7 @@ class shim:
         self.lastCommand = ""
 
         # TODO(rob): add a way to set the num loops and update the arduino code to accept those changes
-        self.numLoops = 8
+        self.numLoops = 1
         self.loopCurrents = [0 for _ in range(self.numLoops)] 
         self.calibrated = False
 

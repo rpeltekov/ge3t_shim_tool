@@ -1,6 +1,7 @@
 import threading, time, os
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
 from matplotlib import pyplot as plt
 import numpy as np
 
@@ -26,6 +27,36 @@ class LogMonitorThread(QThread):
 
     def stop(self):
         self.running = False
+
+class ImageViewer(QGraphicsView):
+    def __init__(self, parent=None, label=None):
+        super(ImageViewer, self).__init__(parent)
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+        self.pixmap_item = None
+        self.label = label
+
+    def set_pixmap(self, pixmap):
+        if self.pixmap_item is None:
+            self.pixmap_item = self.scene.addPixmap(pixmap)
+        else:
+            self.pixmap_item.setPixmap(pixmap)
+        self.pixmap = pixmap.toImage()
+
+    def mouseMoveEvent(self, event):
+        if self.pixmap_item is not None:
+            point = self.mapToScene(event.pos())
+            x, y = int(point.x()), int(point.y())
+            if 0 <= x < self.pixmap.width() and 0 <= y < self.pixmap.height():
+                color = self.pixmap.pixelColor(x, y)
+                # Assuming there's a method to update a status bar or label:
+                self.label.setText(f"Coordinates: ({x}, {y}) - Grayscale Value: {color.value()}")
+            else:
+                self.label.clear()
+
+def load_config(filename):
+    with open(filename, 'r') as file:
+        return json.load(file)
 
 def kickoff_thread(target, args=()):
     t = threading.Thread(target=target, args=args)
@@ -112,11 +143,13 @@ class Trigger(QObject):
 def saveImage(directory, title, b0map, slice_index, vmax, white=False):
     """Save B0MAP of either background, estimation, or actual to a file."""
 
+    if b0map is None:
+        return None
     name = f"{title} B0 Map Slice:{slice_index} (Hz)"
     output_path = os.path.join(directory, f"{title}_{slice_index}"+".png")
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    im = ax.imshow(b0map[:,slice_index,:], cmap='bwr', vmin=-vmax, vmax=vmax)
+    im = ax.imshow(b0map, cmap='jet', vmin=-vmax, vmax=vmax)
     cbar = plt.colorbar(im)
 
     if white:
@@ -171,7 +204,7 @@ def saveHistogram(directory, title, data, slice_index):
         ax.set_title(f"{title} Offresonance of Volume")
         output_path = os.path.join(directory, f"{title}_Volume_Histogram.png")
  
-    fig.savefig(output_path, bbox_inches='tight', transparent=True)
+    fig.savefig(output_path, bbox_inches='tight', transparent=False)
     plt.close(fig)
     return output_path
 
@@ -184,7 +217,7 @@ def saveHistogramsOverlayed(directory, titles, data, slice_index):
             makesurenottooverwrite = data[i].flatten()
             #ignore nans:
             makesurenottooverwrite = makesurenottooverwrite[~np.isnan(makesurenottooverwrite)]
-            ax.hist(makesurenottooverwrite, bins=100, alpha=0.7, rwidth=0.85, label=titles[i])
+            ax.hist(makesurenottooverwrite, bins=100, alpha=0.7, rwidth=0.85, label=titles[i], density=True)
     else:
         print(f"DEBUG: not expected data shape, first dimension is not 3")
         return
@@ -196,6 +229,6 @@ def saveHistogramsOverlayed(directory, titles, data, slice_index):
     else:
         ax.set_title("Offresonance Over Full ROI")
         output_path = os.path.join(directory, f"overlayed_histograms_Volume.png")
-    fig.savefig(output_path, bbox_inches='tight', transparent=True)
+    fig.savefig(output_path, bbox_inches='tight', transparent=False)
     plt.close(fig)
     return output_path
