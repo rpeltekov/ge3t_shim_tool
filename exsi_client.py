@@ -58,7 +58,7 @@ class exsi:
 
             self.send(f'ConnectToScanner product={self.exsiProduct} passwd={self.exsiPasswd}')
             self.send('NotifyEvent all=on')
-            self.send('GetExamInfo')
+            self.send('GetExamInfo') #TODO: use the correct get set methods at bottom.
         except Exception as e:
             print("ERROR EXSI CLIENT: Connection refused. Please check the host and port.\n Error: ", e)
 
@@ -82,7 +82,7 @@ class exsi:
                         self.sendZeroCmd()
                         self.sendCurrentCmd(channel, current)
                     self._send_command(cmd)
-                    #TODO(rob): see if this timeout of 60 can be fixed in any way here...
+                    #TODO: see if this timeout of 60 can be fixed in any way here...
                     ready = self.ready_event.wait(60)
                     if not ready:
                         self.stop()
@@ -190,7 +190,7 @@ class exsi:
             print(f"EXSI CLIENT DEBUG: Images are ready. in msg: {msg}")
             images_ready = True
 
-        # TODO(rob): this is kind of a confuzzling place to put this contradiction
+        # TODO: this is kind of a confuzzling place to put this contradiction
         if "fail" in msg:
             success = False # Command failed
             ready = True # ready for next command bc we clear the queue
@@ -287,6 +287,59 @@ class exsi:
             self.s.shutdown(socket.SHUT_RDWR)
             self.s.close()
             print("INFO EXSI CLIENT: socket closed successfully. bye.")
+        
+    ##### EXSI CLIENT CONTROL FUNCTIONS #####   
+
+
+    def requireExsiConnected(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.connected_ready_event.is_set() and not self.debugging:
+                # Show a message to the user, reconnect shim client.
+                raise ExsiError("ExSI Client Not Connected.")
+            return func(self)
+        return wrapper
+
+    @requireExsiConnected
+    def sendLoadProtocol(self, name):
+        self.send('LoadProtocol site path="' + name + '"')
+
+    @requireExsiConnected
+    def sendSelTask(self):
+        self.send('SelectTask taskkey=')
+
+    def sendActTask(self):
+        self.send('ActivateTask')
+
+    def sendPatientTable(self):
+        self.send('PatientTable advanceToScan')
+
+    def sendScan(self):
+        self.send('Scan')
+
+    def sendGetExamInfo(self):
+        self.send('GetExamInfo')
+    
+    def sendSetCV(self, name, value):
+        self.send(f"SetCVs {name}={value}")
+
+    def sendPrescan(self, auto=False):
+        if auto:
+            self.send("Prescan auto") # tune the transmit gain and such
+        else:
+            self.send("Prescan skip")
+
+    def sendSetCenterFrequency(self, freq:int):
+        self.send(f"Prescan values=hide cf={freq}")
+    
+    def sendSetShimValues(self, x:int, y:int, z:int):
+        self.send(f"SetShimValues x={self.linShims[0] + x} y={self.linShims[1] + y} z={self.linShims[2] + z}")
+
     
     def __del__(self):
         self.stop()
+
+class ExsiError(Exception):
+    """Base class for exceptions in this module."""
+    pass

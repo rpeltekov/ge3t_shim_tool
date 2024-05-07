@@ -221,6 +221,40 @@ class shim:
     
     def __del__(self):
         self.stop()
+
+    # ______ SHIM SPECIFIC COMMANDS ______ #
+
+    def requireShimDriverConnected(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.connectedEvent.is_set() and not self.debugging:
+                # Show a message to the user, reconnect shim client.
+                raise ShimDriverError("SHIM Client Not Connected")
+            return func(self)
+        return wrapper
+ 
+    @requireShimDriverConnected
+    def shimCalibrate(self):
+        self.send("C")
+
+    @requireShimDriverConnected
+    def shimZero(self):
+        self.send("Z")
+
+    @requireShimDriverConnected
+    def shimGetCurrent(self):
+        # Could be used to double check that the channels calibrated
+        self.send("I")
+    
+    @requireShimDriverConnected
+    def shimSetCurrent(self, channel, current, board=0):
+        # get the values from the fields above
+        self.shimSetCurrentManual(channel, current, board)
+
+class ShimDriverError(Exception):
+    """Exception raised for errors in the Shim Driver."""
+    pass
     
 if __name__ == "__main__":
     arduino_port = "/dev/ttyACM1"  # Adjust to your Arduino's serial port
