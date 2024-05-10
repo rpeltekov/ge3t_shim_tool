@@ -1,12 +1,13 @@
 import numpy as np
 from cvxopt import solvers, matrix
 from dicomUtils import *
+from typing import List
 
 def compute_b0map(first, second, te1, te2):
     # Naively compute the b0 map using two phase images from the scans with different TEs
     return np.angle(np.conj(first)*second) / (2*np.pi) / ((te2-te1)*1e-3)
 
-def compute_b0maps(n, localExamRootDir, threshFactor=.4):
+def compute_b0maps(n, localExamRootDir, threshFactor=.4) -> List[np.ndarray]:
     # NOTE: Assumes that n most recent scans are all basis pair scans.
     """ Computes the last n b0maps from pairs"""
     seriesPaths = listSubDirs(localExamRootDir)
@@ -21,37 +22,24 @@ def compute_b0maps(n, localExamRootDir, threshFactor=.4):
         b0maps.append(b0map)
     return b0maps
 
-def subtractBackground(background, b0maps):
+def subtractBackground(background, b0maps) -> List[np.ndarray]:
     # NOTE: Assumes b0maps[0] is background and the rest are loops @ 1 A!!!!
     bases = []
     for i in range(len(b0maps)):
         bases.append(b0maps[i] - background)
     return bases
 
-# TODO(rob): consider the offset in the position to make an affine linear gradient.
-def addNaiveLinGrad(bases):
-    # also create the linear gradients as values here:
-    N, M, P = bases[0].shape
-    
-    # Create mesh grids for x, y, z axes
-    x = np.linspace(-1, 1, N)
-    y = np.linspace(-1, 1, M)
-    z = np.linspace(-1, 1, P)
-    basismult = np.meshgrid(x, y, z, indexing='ij')
-    
-    # Assuming you want the maximum Bz value at the edges of the volume to be a specific value
-    # Adjust these max_values according to your requirements
-    # TODO(rob): check this over....
-    max_value = 4258*.3*9.6
-    
-    # Generate the spatially varying Bz field
-    for i in range(3):
-        bases.append(basismult[i]*max_value)
+def maskOneSlice(mask, sliceIdx) -> np.ndarray:
+    """Return the mask with only one slice filled; 3D Array in CORONAL ORIENTATION"""
+    newMask = np.zeros_like(mask)
+    newMask[:,sliceIdx,:] = mask[:,sliceIdx,:]
+    return newMask
 
-def createMask(background, bases, roi, sliceIndex=-1, orientation=Orientation.CORONAL):
+def createMask(background, bases, roi) -> np.ndarray:
+    """Create 3d boolean mask from background, bases and ROI"""
     # require that one of background, bases and roi is not None
     if background is None and bases is None and roi is None:
-        raise ValueError("At least one of background, bases or roi must be provided")
+        raise ShimComputeError("At least one of background, bases or roi must be provided")
 
     masks = []
     if background is not None:
@@ -62,16 +50,6 @@ def createMask(background, bases, roi, sliceIndex=-1, orientation=Orientation.CO
     # then add roi if there is one; should already be boolean mask
     if roi is not None:
         masks.append(roi)
-    # consider slice only if it is provided TODO(rob): add other orientations more nicely
-    if sliceIndex >= 0: #and orientation == Orientation.CORONAL:
-        if background is not None:
-            sliceMask = np.zeros(background.shape)
-        elif bases is not None:
-            sliceMask = np.zeros(bases[0].shape)
-        else:
-            sliceMask = np.zeros(roi.shape)
-        sliceMask[:,sliceIndex,:] = np.nan
-        masks.append(np.isnan(sliceMask))
 
     # union the masks
     mask = masks[0]
@@ -80,7 +58,7 @@ def createMask(background, bases, roi, sliceIndex=-1, orientation=Orientation.CO
     
     return mask
 
-def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False):
+def solveCurrents(background, rawBases, mask, withLinGrad=False, linShimFactor=20, calibrationCurrent=1,debug=False) -> np.ndarray:
     # make a copy so that we can work with that instead
     bases = []
 
@@ -132,7 +110,7 @@ def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False):
         solvers.options['show_progress'] = False
         res = solvers.qp(matrix(p), matrix(q), matrix(g), matrix(h))
     except ValueError as e:
-        print(f"DEBUG: Error in solving the problem: {e}")
+        print(f"DEBUG: Error in solving the problem; Likely due to singular matrix bc trying to solve for something outside ROI")
         return None
 
     return np.array(res['x']).flatten()
@@ -148,3 +126,6 @@ def evaluate(d, debug=False):
     # if debug:
     #     print(stats)
     return stats, [std_og, mean_og, median_og, rmse]
+
+class ShimComputeError(Exception):
+    pass

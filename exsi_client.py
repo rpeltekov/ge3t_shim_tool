@@ -70,17 +70,27 @@ class exsi:
                     cmd = self.command_queue.get(timeout=1) 
                     print("EXSI CLIENT DEBUG: Processing command: ", cmd)
                     # check if we need to initialize current switch as well...
+                    pattern = r"(\d+)\s(\d+\.\d+)"
                     if "|" in cmd:
+                        # Proess synced shim current set command for calibration (Zero first, and also load protocol)
                         cmd = cmd.split(" | ")
                         cmd, current_cmd = cmd[0], cmd[1]
-                        pattern = r"(\d+)\s(\d+\.\d+)"
                         match = re.match(pattern, current_cmd)
                         channel = int(match.group(1))
                         current = float(match.group(2))
                         if self.debugging:
-                            print(f"EXSI CLIENT Debug: SENDING CURRENT COMMANDS, channel {channel} current {current:.2f}")
+                            print(f"EXSI CLIENT Debug: SEND CURRENT COMMAND, channel {channel} current {current:.2f}")
                         self.sendZeroCmd()
                         self.sendCurrentCmd(channel, current)
+                    if cmd.startswith("X"):
+                        # Proess synced shim current set command. shouldn't queue anything else after this
+                        match = re.match(pattern, cmd)
+                        channel = int(match.group(1))
+                        current = float(match.group(2))
+                        self.sendCurrentCmd(channel, current)
+                        if self.debugging:
+                            print(f"EXSI CLIENT Debug: SEND SYNC CURRENT COMMAND, channel {channel} current {current:.2f}")
+                        continue
                     self._send_command(cmd)
                     #TODO: see if this timeout of 60 can be fixed in any way here...
                     ready = self.ready_event.wait(60)
@@ -334,7 +344,7 @@ class exsi:
         self.send(f"Prescan values=hide cf={freq}")
     
     def sendSetShimValues(self, x:int, y:int, z:int):
-        self.send(f"SetShimValues x={self.linShims[0] + x} y={self.linShims[1] + y} z={self.linShims[2] + z}")
+        self.send(f"SetShimValues x={x} y={y} z={z}")
 
     
     def __del__(self):

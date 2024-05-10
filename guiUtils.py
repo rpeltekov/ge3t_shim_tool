@@ -3,9 +3,12 @@ File for all the Utility functions for the GUI
 """
 
 import time
-from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox
+from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox, QBoxLayout
 from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal, Qt
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
+from PyQt6.QtGui import QValidator
+from functools import partial
+import numpy as np
 
 class LogMonitorThread(QThread):
     update_log = pyqtSignal(str)
@@ -36,6 +39,7 @@ class ImageViewer(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         self.pixmap_item = None
+        self.qImage = None
         self.label = label
 
     def set_pixmap(self, pixmap):
@@ -86,14 +90,13 @@ class Trigger(QObject):
 
 # ------------ gui objects ------------
 
-
-def addButtonConnectedToFunction(layout, buttonName, function):
+def addButtonConnectedToFunction(layout: QBoxLayout, buttonName: str, function: function):
     button = QPushButton(buttonName)
     button.clicked.connect(function)
     layout.addWidget(button)
     return button
 
-def addEntryWithLabel(layout, labelStr, entryvalidator):
+def addEntryWithLabel(layout: QBoxLayout, labelStr: str, entryvalidator: QValidator):
     label = QLabel(labelStr)
     entry = QLineEdit()
     entry.setValidator(entryvalidator)
@@ -103,7 +106,7 @@ def addEntryWithLabel(layout, labelStr, entryvalidator):
     layout.addLayout(labelEntryLayout)
     return entry
 
-def addLabeledSlider(layout, labelStr, granularity, orientation=Qt.Orientation.Horizontal):
+def addLabeledSlider(layout: QBoxLayout, labelStr: str, granularity: int, orientation=Qt.Orientation.Horizontal):
     slider = QSlider(orientation)
     label = QLabel(labelStr)
     labelEntryLayout = QHBoxLayout()
@@ -115,11 +118,26 @@ def addLabeledSlider(layout, labelStr, granularity, orientation=Qt.Orientation.H
     layout.addLayout(labelEntryLayout)
     return slider
 
-def addLabeledSliderAndEntry(layout, labelStr, entryvalidator):
-    slider = QSlider(Qt.Orientation.Horizontal)
+def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: QValidator, updateFunc: function):
+    """
+    Add a slider and entry to the layout with the given label
+    default with value 0
+    On updates, they will update each other and call the updateFunc provided
+    """
     label = QLabel(labelStr)
+
+    slider = QSlider(Qt.Orientation.Horizontal)
+    slider.setMinimum(0)
+    slider.setMaximum(0)
+    slider.setValue(0)
+
     entry = QLineEdit()
     entry.setValidator(entryvalidator)
+    entry.setText(str(0))
+
+    slider.valueChanged.connect(partial(updateSlider, entry, updateFunc))
+    entry.editingFinished.connect(partial(updateEntry, entry, slider, updateFunc))
+
     labelEntryLayout = QHBoxLayout()
     labelEntryLayout.addWidget(label)
     labelEntryLayout.addWidget(slider)
@@ -127,7 +145,17 @@ def addLabeledSliderAndEntry(layout, labelStr, entryvalidator):
     layout.addLayout(labelEntryLayout)
     return slider, entry
 
-def addButtonWithFuncAndMarker(layout, buttonName, function, markerName="Done?"):
+def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxVal: int, validator: QValidator, defaultVal:int=None):
+    slider.setMinimum(minVal)
+    slider.setMaximum(maxVal)
+    entry.setValidator(validator)
+    if defaultVal is not None:
+        slider.setValue(defaultVal)
+        entry.setText(str(defaultVal))
+    else:
+        entry.setText(str(slider.value()))
+
+def addButtonWithFuncAndMarker(layout: QBoxLayout, buttonName: str, function: function, markerName="Done?"):
     hlayout = QHBoxLayout()
     layout.addLayout(hlayout)
     marker = QCheckBox(markerName)
@@ -140,3 +168,76 @@ def addButtonWithFuncAndMarker(layout, buttonName, function, markerName="Done?")
         hlayout.addWidget(marker)
         button = addButtonConnectedToFunction(hlayout, buttonName, function)
     return button, marker
+
+# ------------ gui update helper functions ------------ #
+
+def updateEntry(entry: QLineEdit, slider: QSlider, updateFunc: function):
+    """
+    Update the slider to match the entry, and call the updateFunc with the new value
+    """
+    index = int(entry.text()) if entry.text() else 0
+    slider.setValue(index)
+    updateFunc(index)
+
+def updateSlider(entry: QLineEdit, updateFunc: function, value: int):
+    """Update the entry to match the slider, and call the updateFunc with the new value"""
+    entry.setText(str(value))
+    updateFunc(value)
+
+# ------------ gui ROI shapes ------------ #
+class ROIObject():
+    """
+    General ROI object to hold the parameters of an ROI
+    """
+    def __init(self) -> None:
+        self.sizes = [0,0,0]
+        self.centers = [0,0,0]
+        self.sliderSizes = [0,0,0]
+        self.sliderCenters = [0,0,0]
+
+        self.xdim = 0
+        self.ydim = 0
+        self.zdim = 0
+
+        self.updated = False
+
+    def getSlicePoints(self, sliceIdx: int):
+        """
+        Return the points of the ellipse on the given slice
+        """
+        points = []
+        for x in range(self.xdim):
+            for y in range(self.ydim):
+                if self.isPointInROI(x, y, sliceIdx):
+                    points.append((x, y))
+        return points
+
+    def getROIMask(self):
+        """
+        Return the 3D numpy boolean mask of the ROI
+        """
+        mask = np.zeros((self.xdim, self.ydim, self.zdim), dtype=bool)
+        for z in range(self.zdim):
+            for x in range(self.xdim):
+                for y in range(self.ydim):
+                    mask[x, y, z] = self.isPointInROI(x, y, z)
+        return mask
+
+    def isPointInROI(self, x, y, z):
+        """
+        Check if the point is in the ROI
+        """
+        raise NotImplementedError
+    
+class ellipsoidROI(ROIObject):
+    """
+    Class to hold the parameters of an ellipsoid ROI
+    """
+    def __init__(self, xdim: int, ydim: int) -> None:
+        super().__init__(xdim, ydim)
+    
+    def isPointInROI(self, x, y, z):
+        return ((x - self.centers[0])**2 / self.sizes[0]**2 +
+                (y - self.centers[1])**2 / self.sizes[1]**2 +
+                (z - self.centers[2])**2 / self.sizes[2]**2) <= 1
+

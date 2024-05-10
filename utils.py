@@ -1,6 +1,7 @@
 import threading, os, json
 from matplotlib import pyplot as plt
-import sys, paramiko, subprocess, os, threading, re
+import paramiko, subprocess, os, threading, re
+from datetime import datetime
 import numpy as np
 
 from guiUtils import *
@@ -8,6 +9,21 @@ from guiUtils import *
 def load_config(filename):
     with open(filename, 'r') as file:
         return json.load(file)
+
+
+def log(msg, stdout=False):
+    # record a timestamp and prepend to the message
+
+    guilog = "logs/guiLog.txt"
+    current_time = datetime.now()
+    formatted_time = current_time.strftime('%H:%M:%S')
+    msg = f"{formatted_time} {msg}"
+    # only print if in debugging mode, or if forceStdOut is set to True
+    if stdout:
+        print(msg)
+    # always write to the log file
+    with open(guilog, 'a') as file:
+        file.write(f"{msg}\n")
 
 def kickoff_thread(target, args=()):
     t = threading.Thread(target=target, args=args)
@@ -62,6 +78,11 @@ def requireAssetCalibration(func):
         return func(self)
     return wrapper
 
+def launchInThread(func):
+    """Decorator to run a function in a separate thread."""
+    def wrapper(self, *args, **kwargs):
+        kickoff_thread(func, (self, *args))
+    return wrapper
 
 def saveImage(directory, title, b0map, slice_index, vmax, white=False):
     """Save B0MAP of either background, estimation, or actual to a file."""
@@ -200,7 +221,7 @@ def getLastSetGradients(host, hvPort, hvUser, hvPassword):
         if match:
             gradients = [int(match.group(i)) for i in range(1, 4)]
             print(f"Debug: found that linear shims got set to {gradients}")
-            return gradients
+            return np.array(gradients)
         print(f"DEBUG: no matches!")
     print(f"Debug: failed to find the last used gradients")
     return None

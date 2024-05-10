@@ -4,6 +4,8 @@ import queue
 import re
 from datetime import datetime
 
+from utils import launchInThread
+
 class shim:
     def __init__(self, port, baudRate, outputFile, defaultTimeout=1, debugging=False):
         self.debugging = debugging
@@ -234,23 +236,27 @@ class shim:
             return func(self)
         return wrapper
  
+    @launchInThread
     @requireShimDriverConnected
     def shimCalibrate(self):
         self.send("C")
 
+    @launchInThread
     @requireShimDriverConnected
     def shimZero(self):
         self.send("Z")
 
+    @launchInThread
     @requireShimDriverConnected
     def shimGetCurrent(self):
         # Could be used to double check that the channels calibrated
         self.send("I")
     
+    @launchInThread
     @requireShimDriverConnected
-    def shimSetCurrent(self, channel, current, board=0):
-        # get the values from the fields above
-        self.shimSetCurrentManual(channel, current, board)
+    def shimSetCurrentManual(self, channel, current, board=0):
+        """helper function to set the current for a specific channel on a specific board."""
+        self.send(f"X {board} {channel} {current}")
 
 class ShimDriverError(Exception):
     """Exception raised for errors in the Shim Driver."""
