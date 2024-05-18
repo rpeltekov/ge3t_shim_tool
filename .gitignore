@@ -54,6 +54,7 @@ logs
 # dont push the data if it is being stored here...
 data
 results
+toolStates
 
 # QtCreator CMake
 CMakeLists.txt.user*
