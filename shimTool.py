@@ -2,11 +2,11 @@
 
 
 from datetime import datetime
-import warnings
-import sys, os, threading
+import sys, os, pickle, signal
 import numpy as np
-import json
 from typing import List
+
+from PyQt6.QtWidgets import QApplication
 
 # Import the custom client classes and util functions
 from exsi_client import exsi
@@ -33,12 +33,16 @@ class shimTool():
         self.shimLog = os.path.join(self.config['rootDir'], config['shimLog'])
         self.guiLog = os.path.join(self.config['rootDir'], config['guiLog'])
 
+        self.latestStateSavePath = os.path.join(self.config['rootDir'], "toolStates", "shimToolLatestState.pkl")
+
         # Create the log files if they don't exist / empty them if they already have things there
-        for log in [self.scannerLog, self.shimLog, self.guiLog]:
+        for log in [self.scannerLog, self.shimLog, self.guiLog, self.latestStateSavePath]:
             if not os.path.exists(log):
                 # create the directory and file
                 os.makedirs(os.path.dirname(log), exist_ok=True)
-            with open(log, "w"):
+        for log in [self.scannerLog, self.shimLog, self.guiLog]:
+            with open(log, "w"): # remake the file empty
+                print(log)
                 pass
 
         # ----------- Clients ----------- #
@@ -55,22 +59,17 @@ class shimTool():
         self.shimInstance.clearExsiQueue = self.exsiInstance.clear_command_queue
         self.exsiInstance.clearShimQueue = self.shimInstance.clearCommandQueue
 
-        # main GUI instantiation
-        self.app = QApplication(sys.argv)
-        self.gui = Gui(self.debugging, self, self.exsiInstance, self.shimInstance, self.scannerLog, self.shimLog)
-
 
         # ----------- Shim Tool Parameters ----------- #
         self.maxDeltaTE = 2000 # 2000 us = 2 ms
         self.minDeltaTE = 100 # 2000 us = 2 ms
+        self.defaultDeltaTE = 500
         self.minCalibrationCurrent = 100 # 100 mA
         self.maxCalibrationCurrent = 2000 # 2 A
+        self.defaultCalibrationCurrent = 1000
         self.linShimFactor = 20 # max 300 -- the value at which to record basis map for lin shims
         self.ogLinShimValues = None # the original linear shim values
 
-        self.gehcExamDataPath = None # the path to the exam data on the GE Server
-        self.localExamRootDir = None # Where the raw dicom data gets stored, once pulled from the GE Server
-        self.backgroundDCMdir = None # the specific local Dicom Directory for the background image 
  
         # ----------- Shim Tool State ----------- #
         # Scan session attributes
@@ -80,6 +79,11 @@ class shimTool():
         self.computedShimSolutions = False
 
         self.roiEditorEnabled = False
+
+        self.gehcExamDataPath = None # the path to the exam data on the GE Server
+        self.localExamRootDir = None # Where the raw dicom data gets stored, once pulled from the GE Server
+        self.resultsDir       = None # location to save figures to
+        self.backgroundDCMdir = None # the specific local Dicom Directory for the background image 
 
         # 3d data arrays
         self.backgroundB0Map: np.ndarray = None # 3d array of the background b0 map 
@@ -101,6 +105,11 @@ class shimTool():
         self.shimStatStrs: List[List[str]] = [None, None, None] # string form stats
         self.shimStats: List[List] = [None, None, None] # numerical form stats
 
+        # ----------- Shim Tool GUI ----------- #
+        # main GUI instantiation
+        self.app = QApplication(sys.argv)
+        self.gui = Gui(self.debugging, self, self.exsiInstance, self.shimInstance, self.scannerLog, self.shimLog)
+
 
     def run(self):
         # start the gui
@@ -114,12 +123,12 @@ class shimTool():
             if not os.path.exists(self.localExamRootDir):
                 os.makedirs(self.localExamRootDir)
             self.gui.setWindowAndExamNumber(self.exsiInstance.examNumber, self.exsiInstance.patientName)
-            self.gui.renameTab(self.exsiTab, "ExSI Control")
+            self.gui.renameTab(self.gui.exsiTab, "ExSI Control")
         # wait for the shim drivers connected to update the tab name
         def waitForShimConnectedEvent():
             if not self.shimInstance.connectedEvent.is_set():
                 self.shimInstance.connectedEvent.wait()
-            self.gui.renameTab(self.shimTab, "Shim Control")
+            self.gui.renameTab(self.gui.shimmingTab, "Shim Control")
     
         # let us hope that there isn't some race condition here...
         kickoff_thread(waitForExSIConnectedReadyEvent)
@@ -151,12 +160,67 @@ class shimTool():
         self.log('Debug: done extracting the background mag image')
         self.gui.viewData[0] = res[0]
 
-
     # ----------- Shim Functions ----------- #
 
+    def saveState(self):
+        """ Save all the state attributes so that they can be reloaded later.
+            Main usecase for this is not having to rescan things so that you can debug the tool faster
+        """
+
+        # put all the attributes into a list, and save them to file that you can unpack easy
+        attr_names = [
+            'assetCalibrationDone', 'autoPrescanDone', 'obtainedBasisMaps', 'computedShimSolutions',
+            'roiEditorEnabled', 'backgroundB0Map', 'rawBasisB0maps', 'basisB0maps', 'expectedB0Map',
+            'shimmedB0Map', 'solutions', 'solutionValuesToApply', 'roiMask', 'finalMask', 'ogLinShimValues',
+            'shimStatStrs', 'shimStats', 'gehcExamDataPath', 'localExamRootDir', 'resultsDir', 'backgroundDCMdir'
+        ]
+        
+        # Create a dictionary to hold your attributes
+        attr_dict = {name: getattr(self, name) for name in attr_names if hasattr(self, name)}
+        attr_dict['ogCenterFreq'] = self.exsiInstance.ogCenterFreq
+
+        with open(self.latestStateSavePath, 'wb') as f:
+            pickle.dump(attr_dict, f)
+        self.gui.saveState()
+        
+
+    def loadState(self):
+        """Load the state attributes from the save file"""
+        """This function is also super useful for printing out debug statements about the state of the app more quickly"""
+
+        if not os.path.exists(self.latestStateSavePath):
+            self.log(f"There is nothing saved to load at {self.latestStateSavePath}")
+            return    
+
+        # Check if the file is empty
+        if os.path.getsize(self.latestStateSavePath) == 0:
+            self.log(f"The file at {self.latestStateSavePath} is empty.")
+            return
+
+        with open(self.latestStateSavePath, 'rb') as f:
+            try:
+                attr_dict = pickle.load(f)
+                for name, value in attr_dict.items():
+                    setattr(self, name, value)        
+            except EOFError as e:
+                self.log(f"ERROR: Failed to load state: {e}")
+                return 
+            
+        # Finish applying values not originally in this class
+        self.exsiInstance.ogCenterFreq = attr_dict['ogCenterFreq']
+        
+        # load all the 
+        self.gui.loadState()
+
+        # re mask / update visualization
+        self.applyMask()
+        self.gui.updateAllDisplays()
+
+        
     def setLinGradients(self, linGrad):
         """Set the new gradient as offset from the prescan set ones"""
-        linGrad = linGrad + self.ogLinShimValues
+        if self.ogLinShimValues is not None:
+            linGrad = linGrad + self.ogLinShimValues
         self.exsiInstance.sendSetShimValues(*linGrad)
 
     def sendSyncedShimCurrent(self, channel: int, current: float):
@@ -174,24 +238,24 @@ class shimTool():
         for i in range(2):
             self.exsiInstance.sendSelTask()
             self.exsiInstance.sendActTask()
-            if linGrad:
+            if linGrad is not None:
                 self.setLinGradients(linGrad)
-            elif not preset:
-                self.setLinGradients(np.array([0,0,0]))
+            # elif not preset:
+            #     self.setLinGradients(np.array([0,0,0]))
             for cv in cvs.keys():
                 if cv == "act_te":
                     if i == 0:
                         self.exsiInstance.sendSetCV(cv, cvs[cv][0])
                     else:
-                        self.exsiInstance.sendSetCV(cv, cvs[cv][0] + self.shimDeltaTE)
+                        self.exsiInstance.sendSetCV(cv, cvs[cv][0] + self.gui.getShimDeltaTE())
                 else:
                     self.exsiInstance.sendSetCV(cv, cvs[cv])
             self.exsiInstance.sendPatientTable()
             if not self.autoPrescanDone:
-                self.exsiInstance.sendPrescan(auto=True)
+                self.exsiInstance.sendPrescan(True)
                 self.autoPrescanDone = True
             else:
-                self.exsiInstance.sendPrescan(auto=False)
+                self.exsiInstance.sendPrescan(False)
             self.exsiInstance.sendScan()
 
     def queueBasisPairScan(self, linGrad=None, preset=False):
@@ -211,65 +275,82 @@ class shimTool():
     def countScansCompleted(self, n):
         """should be 2 for every basis pair scan"""
         for i in range(n):
-            self.log(f"DEBUG: checking to see if failure happened on last run: currently on scan {i+1} / {n}")
+            self.log(f"Checking for failure on last run; On scan {i+1} / {n}")
             if not self.exsiInstance.no_failures.is_set():
                 self.log("Error: scan failed")
                 self.exsiInstance.no_failures.set()
                 return False
-            self.log(f"DEBUG: Waiting for scan to complete, currently on scan {i+1} / {n}")
+            self.log(f"No Fail. Waiting for scan to complete, On scan {i+1} / {n}")
             if not self.exsiInstance.images_ready_event.wait(timeout=90):
                 self.log(f"Error: scan {i+1} / {n} didn't complete within 90 seconds bruh")
                 return False
             else:
                 self.exsiInstance.images_ready_event.clear()
                 # TODO probably should raise some sorta error here...
-        self.log(f"DEBUG: {n} scans completed!")
+        self.log(f"Done. {n} scans completed!")
         # after scans get completed, go ahead and get the latest scan data over on this machine...
         self.transferScanData()
         return True
-
-    def saveROIMask(self):
-        # make a mask the same shape as self.shimImages[0] based on the ellipsoid parameters
-        if self.roiEditorEnabled:
-            self.log(f"DEBUG: Saving ROI mask")
-            self.roiMask = np.zeros_like(self.shimImages[0], dtype=bool)
-        else:
-            self.roiMask = None
-        self.computeMask()
 
     def triggerComputeShimCurrents(self):
         """if background and basis maps are obtained, compute the shim currents"""
         if self.gui.doBackgroundScansMarker.isChecked() and self.gui.doLoopCalibrationScansMarker.isChecked():
             self.expectedB0Map = None
             self.computeShimCurrents()
-        elif self.gui.doBackgroundScansMarker.isChecked():
-            self.computeMask()
         self.evaluateShimImages()
 
     def getSolutionsToApply(self):
         """From the Solutions, set the actual values that will be applied to the shim system."""
         # cf does not change.
-        self.solutionValuesToApply = [np.copy(self.solutions[i]) for i in range(len(self.solutions))]
+        self.solutionValuesToApply = [np.copy(self.solutions[i]) 
+                                      if self.solutions[i] is not None 
+                                      else None 
+                                      for i in range(len(self.solutions))]
         for i in range(len(self.solutions)):
-            for j in range(1,4):
-                # update the lingrad values
-                self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.linShimFactor
-            for j in range(4, len(self.solutions[i])):
-                # update the current values
-                self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.gui.getShimCalCurrent()
-
+            if self.solutions[i] is not None:
+                for j in range(1,4):
+                    # update the lingrad values
+                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.linShimFactor
+                for j in range(4, len(self.solutions[i])):
+                    # update the current values
+                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.gui.getShimCalCurrent()
 
     # ----------- Shim Tool Compute Functions ----------- #
 
     def computeMask(self):
-        """compute the mask for the shim images."""
-        self.finalMask = createMask(self.backgroundB0Map, self.basisB0maps, self.roiMask)
+        """compute the mask for the shim images"""
+        self.finalMask = createMask(self.backgroundB0Map, self.basisB0maps, self.gui.ROI.getROIMask())
+        self.log(f"Computed Mask from background, basis and ROI.")
+    
+    def applyMask(self):
+        """Update the viewable data with the mask applied"""
+
+        maps = [self.backgroundB0Map, self.expectedB0Map, self.shimmedB0Map]
+        
+        # send the masked versions of the data to the GUI
+        for i, map in enumerate(maps):
+            if map is not None:
+                toViewer = np.copy(map)
+                toViewer[~self.finalMask] = np.nan
+                self.gui.viewData[1][i] = toViewer
+        
+        for i, basis in enumerate(self.basisB0maps):
+            if basis is not None:
+                toViewer = np.copy(basis)
+                toViewer[~self.finalMask] = np.nan
+                self.gui.viewData[2][i] = toViewer
+
+        self.log(f"Masked obtained data and sent to GUI.")
+
 
     def computeBackgroundB0map(self):
         # assumes that you have just gotten background by queueBasisPairScan
         b0maps = compute_b0maps(1, self.localExamRootDir)
         self.backgroundDCMdir = listSubDirs(self.localExamRootDir)[-1]
         self.backgroundB0Map = b0maps[0]
+
+        self.computeMask()
+        self.applyMask()
 
     def computeBasisB0maps(self):
         # assumes that you have just gotten background by queueBasisPairScan
@@ -299,8 +380,6 @@ class shimTool():
             self.solutions[i] = solveCurrents(self.backgroundB0Map, 
                                              self.basisB0maps, mask, 
                                              withLinGrad=True, 
-                                             linShimFactor=self.linShimFactor,
-                                             calibrationCurrent=self.gui.getShimCalCurrent(),
                                              debug=self.debugging)
 
         self.getSolutionsToApply() # compute the actual values we will apply to the shim system from these solutions
@@ -310,14 +389,15 @@ class shimTool():
             self.expectedB0Map = self.backgroundB0Map.copy()
             for i in range(self.backgroundB0Map.shape[1]):
                 if self.solutions[i] is not None:
-                    self.expectedB0Map[:,i,:] += self.solutions[i][0] * np.ones(self.shimData[0].shape)
+                    self.expectedB0Map[:,i,:] += self.solutions[i][0] * np.ones(self.backgroundB0Map[:,0,:].shape)
                     numIter = self.shimInstance.numLoops + 3
                     for j in range(numIter):
                         # self.log(f"DEBUG: adding current {j} to shimData[1][{i}]")
-                        self.expectedB0Map[:,i,:] += self.solutions[i][j+1] * self.basisB0maps[j]
+                        self.expectedB0Map[:,i,:] += self.solutions[i][j+1] * self.basisB0maps[j][:,i,:]
                 else:
-                    self.shimData[:,i,:] = np.nan
+                    self.expectedB0Map[:,i,:] = np.nan
             self.gui.currentsComputedMarker.setChecked(True)
+            self.applyMask()
         else:
             self.log("Error: Could not solve for currents. Look at error hopefully in output")
 
@@ -332,18 +412,22 @@ class shimTool():
         else:
             idx = self.gui.getShimSliceIndex()
             self.shimmedB0Map[:,idx,:] = b0maps[0][:,idx,:]
+
+        self.applyMask()
     
     def evaluateShimImages(self):
         """evaluate the shim images (with the final mask applied) and store the stats in the stats array."""
-        for i in range(self.backgroundB0Map.shape[1]):
-            self.shimStatStrs[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
-            self.shimStats[i]  = [None for _ in range(self.backgroundB0Map.shape[1])]
-            mask = maskOneSlice(self.finalMask, i)
-            for map, j in enumerate([self.backgroundB0Map, self.expectedB0Map, self.shimmedB0Map]):
-                if not np.isnan(map[mask]).all():
-                    statsstr, stats = evaluate(map[mask], self.debugging)
-                    self.shimStatStrs[j][i] = statsstr
-                    self.shimStats[j][i] = stats
+        for i, map in enumerate([self.backgroundB0Map, self.expectedB0Map, self.shimmedB0Map]):
+            if map is not None:
+                if self.shimStatStrs[i] is None:
+                    self.shimStatStrs[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
+                    self.shimStats[i]  = [None for _ in range(self.backgroundB0Map.shape[1])]
+                for j in range(self.backgroundB0Map.shape[1]):
+                    mask = maskOneSlice(self.finalMask, j)
+                    if not np.isnan(map[mask]).all():
+                        statsstr, stats = evaluate(map[mask], self.debugging)
+                        self.shimStatStrs[i][j] = statsstr
+                        self.shimStats[i][j] = stats
     
     def evaluateAppliedShims(self):
         """
@@ -381,18 +465,6 @@ class shimTool():
 
 
     # ----------- Shim Tool Button Functions ----------- #
-
-    def onTabSwitch(self, index):
-        self.log(f"DEBUG: Switched to tab {index}")
-        if index == 0:
-            self.gui.updateROIImageDisplay()
-        if index == 1:
-            if self.gui.ROI.updated:
-                self.roiMask = self.gui.ROI.getROIMask()
-                self.recomputeCurrentsAndView()
-            self.gui.ROI.updated = False
-        if index == 2:
-            self.gui.updateBasisView()
 
     def shimSetManualCurrent(self):
         """Set the shim current to the value in the entry."""
@@ -470,7 +542,11 @@ class shimTool():
 
     @disableSlowButtonsTillDone
     def recomputeCurrentsAndView(self):
+        self.computeMask()
+        self.applyMask()
         self.triggerComputeShimCurrents()
+        self.log(f"all should be false in slice roi mask {self.gui.getShimSliceIndex()} {~(self.gui.ROI.getROIMask()[:,self.gui.getShimSliceIndex(),:].any())}")
+        self.log(f"all should be false in slice final mask {self.gui.getShimSliceIndex()} {~(self.finalMask[:,self.gui.getShimSliceIndex(),:].any())}")
         self.gui.updateShimImageAndStats()
 
 
@@ -481,7 +557,6 @@ class shimTool():
         self.backgroundB0Map = None
         self.exsiInstance.images_ready_event.clear()
         if self.countScansCompleted(2):
-            self.gui.roiVizButtonGroup.buttons()[1].setEnabled(True)
             self.transferScanData()
             self.log("DEBUG: just finished all the background scans")
             self.computeBackgroundB0map()
@@ -501,9 +576,7 @@ class shimTool():
     def doBackgroundScans(self):
         # Perform the background scans for the shim system.
         trigger = Trigger()
-        def updateVals():
-            self.gui.updateShimImageAndStats()
-        trigger.finished.connect(updateVals)
+        trigger.finished.connect(self.gui.updateShimImageAndStats)
         kickoff_thread(self.waitBackgroundScan, args=(trigger,))
         self.queueBasisPairScan()
 
@@ -587,7 +660,7 @@ class shimTool():
     @disableSlowButtonsTillDone
     def waitShimmedScans(self, trigger: Trigger):
         self.gui.doShimmedScansMarker.setChecked(False)
-        self.shimmedB0Map[:,self.gui.getShimSliceIndex,:] = np.nan
+        self.shimmedB0Map = None
         self.exsiInstance.images_ready_event.clear()
         if self.countScansCompleted(2):
             self.computeShimmedB0Map()
@@ -622,7 +695,6 @@ class shimTool():
         if self.countScansCompleted(num_scans):
             self.log("DEBUG: just finished all the shim eval scans")
             self.evaluateAppliedShims()
-            self.triggerComputeShimCurrents()
         else:
             self.log("Error: Scans didn't complete")
             self.exsiInstance.images_ready_event.clear()
@@ -681,7 +753,7 @@ class shimTool():
     @requireShimConnection
     @requireAssetCalibration
     def doAllShimmedScans(self):
-        if not self.currentsComputedMarker.isChecked():
+        if not self.gui.currentsComputedMarker.isChecked():
             return
 
         # compute how many scans needed, i.e. how many slices are not Nans out of the ROI
@@ -707,14 +779,107 @@ class shimTool():
                 self.queueBasisPairScan(preset=True)
         kickoff_thread(queueAll)
 
-    def save(self):
-        pass
+    def saveResults(self):
+        def helper():
+            if not self.backgroundB0Map.any():
+                # if the background b0map is not computed, then nothing else is and you can just return
+                return
+            self.log("Debug: saving Images")
+
+            # get the time and date
+            dt = datetime.now()
+            dt = dt.strftime("%Y%m%d_%H%M%S")
+
+            self.resultsDir = os.path.join(self.config['rootDir'], "results", self.exsiInstance.examNumber, dt)
+            if not os.path.exists(self.resultsDir):
+                os.makedirs(self.resultsDir)
+            self.log(f"Debug: saving results to {self.resultsDir}")
+            
+            # pack all the data into one easy to work with numpy array
+            data = np.array([np.copy(self.backgroundB0Map), 
+                             np.copy(self.expectedB0Map), 
+                             np.copy(self.shimmedB0Map)], dtype=object)
+            bases = np.array(self.basisB0maps)
+            labels = ["Background", "Expected", "Shimmed"]
+
+            lastNotNone = 0
+            # apply mask to all of the data
+            self.computeMask()
+            for i in range(3):
+                if data[i] is not None:
+                    lastNotNone = i
+                    data[i][~self.finalMask] = np.nan
+
+            data = data[:lastNotNone+1] # only save data that has been collected so far
+
+            for i in range(bases.shape[0]): 
+                if bases[i] is not None:
+                    bases[i][~self.finalMask] = np.nan
+
+            vmax = np.nanmax(np.abs(data))
+
+            # save individual images and stats
+            for i in range(data.shape[0]):
+                imageTypeSaveDir = os.path.join(self.resultsDir, labels[i])
+                imagesDir = os.path.join(imageTypeSaveDir, 'images')
+                histDir = os.path.join(imageTypeSaveDir, 'histograms')
+                for d in [imageTypeSaveDir, imagesDir, histDir]:
+                    if not os.path.exists(d):
+                        os.makedirs(d)
+
+                self.log(f"Debug: saving slice images and histograms for {labels[i]}")
+                for j in range(data[0].shape[1]):
+                    # save a perslice B0Map image and histogram
+                    if not np.isnan(data[i][:,j,:]).all():
+                        saveImage(imagesDir, labels[i], data[i][:,j,:], j, vmax)
+                        saveHistogram(histDir, labels[i], data[i][:,j,:], j)
+                
+                self.log(f"Debug: saving stats for {labels[i]}")
+                # save all the slicewise stats, appended into one file
+                saveStats(imageTypeSaveDir, labels[i], self.shimStatStrs[i])
+                # generate and then save volume wise stats
+                stats, statarr = evaluate(data[i].flatten(), self.debugging)
+                saveStats(imageTypeSaveDir, labels[i], stats, volume=True)
+
+                self.log(f"Debug: saving volume stats for {labels[i]}")
+                # save volume wise histogram 
+                saveHistogram(imageTypeSaveDir, labels[i], data[i], -1)
+            
+            for i in range(bases.shape[0]):
+                if bases[i] is not None:
+                    basesDir = os.path.join(self.resultsDir, "basisMaps")
+                    baseDir = os.path.join(basesDir, f"basis{i}")
+                    for d in [basesDir, baseDir]:
+                        if not os.path.exists(d):
+                            os.makedirs(d)
+                    for j in range(bases.shape[1]):
+                        saveImage(baseDir, f"basis{i}", bases[i][:,j,:], j, vmax)
+            
+            # save the histogram  all images overlayed
+            if data.shape[0] >= 2:
+                self.log(f"Debug: saving overlayed volume stats for ROI")
+                # for the volume entirely
+                saveHistogramsOverlayed(self.resultsDir, labels, data, -1)
+                # for each slice independently
+                overlayHistogramDir = os.path.join(self.resultsDir, 'overlayedHistogramPerSlice')
+                if not os.path.exists(overlayHistogramDir):
+                    os.makedirs(overlayHistogramDir)
+                for j in range(self.data[0].shape[1]):
+                    saveHistogramsOverlayed(overlayHistogramDir, labels, data[:,:,j,:], j)
+            
+            # save the numpy data
+            np.save(os.path.join(self.resultsDir, 'shimData.npy'), data)
+            np.save(os.path.join(self.resultsDir, 'shimStats.npy'), self.shimStats)
+            np.save(os.path.join(self.resultsDir, 'basis.npy'), bases)
+            self.log(f"Debug: done saving results to {self.resultsDir}")
+        kickoff_thread(helper)
+
 
     # ----------- random methods ------------ #
 
     def log(self, message):
         """Log a message to the GUI log and the shim log."""
-        header = "SHIM TOOL:"
+        header = "SHIM TOOL: "
         log(header + message, self.debugging)
     
 

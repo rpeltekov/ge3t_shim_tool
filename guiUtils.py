@@ -6,7 +6,7 @@ import time
 from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox, QBoxLayout
 from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal, Qt
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
-from PyQt6.QtGui import QValidator
+from PyQt6.QtGui import QValidator, QImage
 from functools import partial
 import numpy as np
 
@@ -39,7 +39,7 @@ class ImageViewer(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         self.pixmap_item = None
-        self.qImage = None
+        self.qImage: QImage = None
         self.label = label
 
     def set_pixmap(self, pixmap):
@@ -72,15 +72,14 @@ def createMessageBox(title, text, informativeText):
 def disableSlowButtonsTillDone(func):
     """Decorator to wrap around slow button functions to disable other buttons until the function is done."""
     def wrapper(self, *args, **kwargs):
-        for button in self.slowButtons:
+        for button in self.gui.slowButtons:
             button.setEnabled(False)
-        # TODO(rob): figure out a better way to handle args generically, and also debug print
-        print(f"DEBUG: {func.__name__} called with len args  < 1: {len(args) < 1}, args: {args}")
+        # TODO: figure out a better way to handle args generically, and also debug print
         if len(args) < 1 or args[0] == False:
             func(self)
         else:
             func(self, *args)
-        for button in self.slowButtons:
+        for button in self.gui.slowButtons:
             button.setEnabled(True)
     return wrapper
 
@@ -90,7 +89,7 @@ class Trigger(QObject):
 
 # ------------ gui objects ------------
 
-def addButtonConnectedToFunction(layout: QBoxLayout, buttonName: str, function: function):
+def addButtonConnectedToFunction(layout: QBoxLayout, buttonName: str, function):
     button = QPushButton(buttonName)
     button.clicked.connect(function)
     layout.addWidget(button)
@@ -112,13 +111,13 @@ def addLabeledSlider(layout: QBoxLayout, labelStr: str, granularity: int, orient
     labelEntryLayout = QHBoxLayout()
     labelEntryLayout.addWidget(label)
     labelEntryLayout.addWidget(slider)
-    slider.setMinimum(0)
+    slider.setMinimum(1)
     slider.setMaximum(granularity)
     slider.setValue((round(granularity)//2))
     layout.addLayout(labelEntryLayout)
     return slider
 
-def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: QValidator, updateFunc: function):
+def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: QValidator, updateFunc):
     """
     Add a slider and entry to the layout with the given label
     default with value 0
@@ -155,7 +154,7 @@ def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxV
     else:
         entry.setText(str(slider.value()))
 
-def addButtonWithFuncAndMarker(layout: QBoxLayout, buttonName: str, function: function, markerName="Done?"):
+def addButtonWithFuncAndMarker(layout: QBoxLayout, buttonName: str, function, markerName="Done?"):
     hlayout = QHBoxLayout()
     layout.addLayout(hlayout)
     marker = QCheckBox(markerName)
@@ -171,25 +170,25 @@ def addButtonWithFuncAndMarker(layout: QBoxLayout, buttonName: str, function: fu
 
 # ------------ gui update helper functions ------------ #
 
-def updateEntry(entry: QLineEdit, slider: QSlider, updateFunc: function):
+def updateEntry(entry: QLineEdit, slider: QSlider, updateFunc):
     """
     Update the slider to match the entry, and call the updateFunc with the new value
     """
     index = int(entry.text()) if entry.text() else 0
     slider.setValue(index)
-    updateFunc(index)
+    updateFunc()
 
-def updateSlider(entry: QLineEdit, updateFunc: function, value: int):
+def updateSlider(entry: QLineEdit, updateFunc, value: int):
     """Update the entry to match the slider, and call the updateFunc with the new value"""
     entry.setText(str(value))
-    updateFunc(value)
+    updateFunc()
 
 # ------------ gui ROI shapes ------------ #
 class ROIObject():
     """
     General ROI object to hold the parameters of an ROI
     """
-    def __init(self) -> None:
+    def __init__(self) -> None:
         self.sizes = [0,0,0]
         self.centers = [0,0,0]
         self.sliderSizes = [0,0,0]
@@ -200,30 +199,42 @@ class ROIObject():
         self.zdim = 0
 
         self.updated = False
+        self.enabled = False
+        self.mask = None
+    
+    def setROILimits(self, xdim, ydim, zdim):
+        self.xdim = xdim
+        self.ydim = ydim
+        self.zdim = zdim
 
     def getSlicePoints(self, sliceIdx: int):
         """
         Return the points of the ellipse on the given slice
         """
         points = []
-        for x in range(self.xdim):
-            for y in range(self.ydim):
-                if self.isPointInROI(x, y, sliceIdx):
-                    points.append((x, y))
+        if self.enabled:
+            for x in range(self.xdim):
+                for y in range(self.ydim):
+                    if self.isIMGPointInROI(x, y, sliceIdx):
+                        points.append((x, y))
         return points
 
     def getROIMask(self):
         """
         Return the 3D numpy boolean mask of the ROI
         """
-        mask = np.zeros((self.xdim, self.ydim, self.zdim), dtype=bool)
-        for z in range(self.zdim):
-            for x in range(self.xdim):
-                for y in range(self.ydim):
-                    mask[x, y, z] = self.isPointInROI(x, y, z)
-        return mask
+        if not self.enabled:
+            return None
+        if self.updated:
+            mask = np.zeros((self.xdim, self.ydim, self.zdim), dtype=bool)
+            for z in range(self.zdim):
+                for x in range(self.xdim):
+                    for y in range(self.ydim):
+                        mask[x, z, y] = self.isIMGPointInROI(x, y, z)
+                        self.mask = mask
+        return self.mask
 
-    def isPointInROI(self, x, y, z):
+    def isIMGPointInROI(self, x, y, z):
         """
         Check if the point is in the ROI
         """
@@ -233,10 +244,10 @@ class ellipsoidROI(ROIObject):
     """
     Class to hold the parameters of an ellipsoid ROI
     """
-    def __init__(self, xdim: int, ydim: int) -> None:
-        super().__init__(xdim, ydim)
+    def __init__(self) -> None:
+        super().__init__()
     
-    def isPointInROI(self, x, y, z):
+    def isIMGPointInROI(self, x, y, z):
         return ((x - self.centers[0])**2 / self.sizes[0]**2 +
                 (y - self.centers[1])**2 / self.sizes[1]**2 +
                 (z - self.centers[2])**2 / self.sizes[2]**2) <= 1

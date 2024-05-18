@@ -3,13 +3,11 @@ from matplotlib import pyplot as plt
 import paramiko, subprocess, os, threading, re
 from datetime import datetime
 import numpy as np
-
 from guiUtils import *
 
 def load_config(filename):
     with open(filename, 'r') as file:
         return json.load(file)
-
 
 def log(msg, stdout=False):
     # record a timestamp and prepend to the message
@@ -220,7 +218,7 @@ def getLastSetGradients(host, hvPort, hvUser, hvPassword):
         match = re.search(r'X =\s+(-?\d+)\s+Y =\s+(-?\d+)\s+Z =\s+(-?\d+)', last_line)
         if match:
             gradients = [int(match.group(i)) for i in range(1, 4)]
-            print(f"Debug: found that linear shims got set to {gradients}")
+            print(f"UTILS: Debug: found that linear shims got set to {gradients}")
             return np.array(gradients)
         print(f"DEBUG: no matches!")
     print(f"Debug: failed to find the last used gradients")

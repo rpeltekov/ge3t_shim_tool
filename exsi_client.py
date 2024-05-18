@@ -260,6 +260,7 @@ class exsi:
                 match = re.search(pattern, msg)
                 if match:
                     self.ogCenterFreq = match.group(1)
+                    print(f"EXSI CLIENT DEBUG: Center frequency found in message: {self.ogCenterFreq}")
                 else:
                     print("EXSI CLIENT DEBUG: Center frequency not found in message.")
                 ready = True
@@ -308,7 +309,7 @@ class exsi:
             if not self.connected_ready_event.is_set() and not self.debugging:
                 # Show a message to the user, reconnect shim client.
                 raise ExsiError("ExSI Client Not Connected.")
-            return func(self)
+            return func(self, *args)
         return wrapper
 
     @requireExsiConnected
@@ -319,30 +320,38 @@ class exsi:
     def sendSelTask(self):
         self.send('SelectTask taskkey=')
 
+    @requireExsiConnected
     def sendActTask(self):
         self.send('ActivateTask')
 
+    @requireExsiConnected
     def sendPatientTable(self):
         self.send('PatientTable advanceToScan')
 
+    @requireExsiConnected
     def sendScan(self):
         self.send('Scan')
 
+    @requireExsiConnected
     def sendGetExamInfo(self):
         self.send('GetExamInfo')
     
+    @requireExsiConnected
     def sendSetCV(self, name, value):
         self.send(f"SetCVs {name}={value}")
 
+    @requireExsiConnected
     def sendPrescan(self, auto=False):
         if auto:
             self.send("Prescan auto") # tune the transmit gain and such
         else:
             self.send("Prescan skip")
 
+    @requireExsiConnected
     def sendSetCenterFrequency(self, freq:int):
         self.send(f"Prescan values=hide cf={freq}")
     
+    @requireExsiConnected
     def sendSetShimValues(self, x:int, y:int, z:int):
         self.send(f"SetShimValues x={x} y={y} z={z}")
 

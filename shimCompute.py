@@ -2,6 +2,7 @@ import numpy as np
 from cvxopt import solvers, matrix
 from dicomUtils import *
 from typing import List
+from utils import *
 
 def compute_b0map(first, second, te1, te2):
     # Naively compute the b0 map using two phase images from the scans with different TEs
@@ -35,20 +36,24 @@ def maskOneSlice(mask, sliceIdx) -> np.ndarray:
     newMask[:,sliceIdx,:] = mask[:,sliceIdx,:]
     return newMask
 
-def createMask(background, bases, roi) -> np.ndarray:
+def createMask(background: np.ndarray, bases: List[np.ndarray], roi: np.ndarray) -> np.ndarray:
     """Create 3d boolean mask from background, bases and ROI"""
     # require that one of background, bases and roi is not None
-    if background is None and bases is None and roi is None:
+    if background is None and np.array([base is None for base in bases]).any() and roi is None:
         raise ShimComputeError("At least one of background, bases or roi must be provided")
-
+    
     masks = []
     if background is not None:
         masks.append(~np.isnan(background))
-    if bases is not None:
+
+    if np.array([base is not None for base in bases]).all():
         for base in bases:
             masks.append(~np.isnan(base))
+
     # then add roi if there is one; should already be boolean mask
+    log(f"DEBUG: ROI is NONE:  {roi is None}", True)
     if roi is not None:
+        log(f"DEBUG: ROI shape {roi.shape}", True)
         masks.append(roi)
 
     # union the masks
@@ -58,7 +63,7 @@ def createMask(background, bases, roi) -> np.ndarray:
     
     return mask
 
-def solveCurrents(background, rawBases, mask, withLinGrad=False, linShimFactor=20, calibrationCurrent=1,debug=False) -> np.ndarray:
+def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False) -> np.ndarray:
     # make a copy so that we can work with that instead
     bases = []
 
