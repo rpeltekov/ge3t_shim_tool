@@ -420,9 +420,8 @@ class shimTool():
         """evaluate the shim images (with the final mask applied) and store the stats in the stats array."""
         for i, map in enumerate([self.backgroundB0Map, self.expectedB0Map, self.shimmedB0Map]):
             if map is not None:
-                if self.shimStatStrs[i] is None:
-                    self.shimStatStrs[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
-                    self.shimStats[i]  = [None for _ in range(self.backgroundB0Map.shape[1])]
+                self.shimStatStrs[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
+                self.shimStats[i]  = [None for _ in range(self.backgroundB0Map.shape[1])]
                 for j in range(self.backgroundB0Map.shape[1]):
                     mask = maskOneSlice(self.finalMask, j)
                     if not np.isnan(map[mask]).all():

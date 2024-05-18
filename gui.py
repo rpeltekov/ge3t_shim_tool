@@ -555,7 +555,7 @@ class Gui(QMainWindow):
             else:
                 normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 255
             # make the value 127 (correlates to 0 Hz offset) wherever it is outside of mask
-            normalizedData[np.isnan(viewDataSlice)] = 127
+            normalizedData[np.isnan(viewDataSlice)] = 0
             # specific pyqt6 stuff to convert numpy array to QImage
             displayData = np.ascontiguousarray(normalizedData).astype(np.uint8)
             # stack 4 times for R, G, B, and alpha value
@@ -609,9 +609,9 @@ class Gui(QMainWindow):
         sliceIdx = self.roiSliceIndexSlider.value()
         offsetFromDepthCenter = abs(sliceIdx - self.ROI.centers[2])
         self.log(f"Offset from depth center: {offsetFromDepthCenter}")
+        drawingQImage = qImage.copy()
         if offsetFromDepthCenter <= self.ROI.sizes[2]:
             self.log(f"abt to try drawing points")
-            drawingQImage = qImage.copy()
             painter = QPainter(drawingQImage)
             # Set the pen color to red and the brush to a semi transparent red
             painter.setPen(QPen(QBrush(QColor(255, 0, 0, 100)), 1))
@@ -620,7 +620,7 @@ class Gui(QMainWindow):
                 painter.drawPoint(x, y)
             painter.end()
         
-            self.setView(drawingQImage, self.views[0])
+        self.setView(drawingQImage, self.views[0])
     
     def validateROIInput(self):
         """Validate the ROI input sliders and entries."""
@@ -672,6 +672,7 @@ class Gui(QMainWindow):
             self.roiToggleButton.setEnabled(True)
 
     def toggleROIEditor(self):
+        self.ROI.updated = True
         if self.roiVizButtonGroup.checkedId() == 1:
             if self.ROI.enabled:
                 self.ROI.enabled = False
