@@ -226,11 +226,12 @@ class ROIObject():
         if not self.enabled:
             return None
         if self.updated:
-            mask = np.zeros((self.xdim, self.ydim, self.zdim), dtype=bool)
+            # TODO issue #1
+            mask = np.zeros((self.ydim, self.zdim, self.xdim), dtype=bool)
             for z in range(self.zdim):
                 for x in range(self.xdim):
                     for y in range(self.ydim):
-                        mask[x, z, y] = self.isIMGPointInROI(x, y, z)
+                        mask[y, z, x] = self.isIMGPointInROI(x, y, z)
                         self.mask = mask
         return self.mask
 

@@ -464,7 +464,7 @@ class shimTool():
             plt.close(fig)
 
 
-    # ----------- Shim Tool Button Functions ----------- #
+    # ----------- Shim Tool Scan Functions ----------- #
 
     def shimSetManualCurrent(self):
         """Set the shim current to the value in the entry."""

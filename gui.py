@@ -585,12 +585,12 @@ class Gui(QMainWindow):
         depth = self.viewData[0].shape[0]
 
         # scale relative to the image size
-        self.ROI.sizes[0] = max(1, round((qImage.width() // 2) * self.ROI.sliderSizes[0]))
-        self.ROI.sizes[1] = max(1, round((qImage.height() // 2) * self.ROI.sliderSizes[1]))
-        self.ROI.sizes[2] = max(1, round((depth // 2) * self.ROI.sliderSizes[2]))
-        self.ROI.centers[0] = round(qImage.width() * self.ROI.sliderCenters[0])
-        self.ROI.centers[1] = round(qImage.height() * self.ROI.sliderCenters[1])
-        self.ROI.centers[2] = round(depth * self.ROI.sliderCenters[2])
+        self.ROI.sizes[0] = max(1, round((self.ROI.xdim // 2) * self.ROI.sliderSizes[0]))
+        self.ROI.sizes[1] = max(1, round((self.ROI.ydim // 2) * self.ROI.sliderSizes[1]))
+        self.ROI.sizes[2] = max(1, round((self.ROI.zdim // 2) * self.ROI.sliderSizes[2]))
+        self.ROI.centers[0] = round(self.ROI.xdim * self.ROI.sliderCenters[0])
+        self.ROI.centers[1] = round(self.ROI.ydim * self.ROI.sliderCenters[1])
+        self.ROI.centers[2] = round(self.ROI.zdim * self.ROI.sliderCenters[2])
 
         self.log(f"the ROI sizes: {self.ROI.sizes}, the centers: {self.ROI.centers}")
         
@@ -639,8 +639,9 @@ class Gui(QMainWindow):
                                     # assume that slider value automatically updated to be within bounds
             # need to set viewDataSlice to the desired slice
             self.viewDataSlice[0] = self.viewData[0][:,self.roiSliceIndexSlider.value(),:]
-            # set ROI limits
-            self.ROI.setROILimits(*self.viewData[0].shape)
+            # set ROI limits TODO issue #1
+            ydim, zdim, xdim = self.viewData[0].shape
+            self.ROI.setROILimits(xdim, ydim, zdim)
         # if the data is latest data
         else:
             upperlimit = self.viewData[0].shape[0]-1

@@ -58,6 +58,10 @@ def extractMetadata(dcm):
         # else:
         orientation = None 
 
+        # TODO issue #1: use this to see how to extract orientation metadata
+        # for elem in dcm.iterall():
+        #     print(f"Tag: {elem.tag}, Name: {elem.name}, VR: {elem.VR}, Value: {elem.value}")
+
         return te, series_desc
     except Exception as e:
         print(f"Error extracting metadata: {e}")
