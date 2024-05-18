@@ -40,7 +40,10 @@ class ImageViewer(QGraphicsView):
         self.setScene(self.scene)
         self.pixmap_item = None
         self.qImage: QImage = None
+        self.viewData = None # 2D data that the image viewer is currently being set to show
         self.label = label
+
+        # TODO issue #7 add color bar
 
     def set_pixmap(self, pixmap):
         if self.pixmap_item is None:
@@ -50,13 +53,14 @@ class ImageViewer(QGraphicsView):
         self.pixmap = pixmap.toImage()
 
     def mouseMoveEvent(self, event):
-        if self.pixmap_item is not None:
+        if self.pixmap_item is not None and self.label is not None and self.viewData is not None:
             point = self.mapToScene(event.pos())
             x, y = int(point.x()), int(point.y())
             if 0 <= x < self.pixmap.width() and 0 <= y < self.pixmap.height():
                 color = self.pixmap.pixelColor(x, y)
+                hz = self.viewData[y, x]
                 # Assuming there's a method to update a status bar or label:
-                self.label.setText(f"Coordinates: ({x}, {y}) - Grayscale Value: {color.value()}")
+                self.label.setText(f"Coordinates: ({x}, {y}) - Value: {hz:.4f}")
             else:
                 self.label.clear()
 

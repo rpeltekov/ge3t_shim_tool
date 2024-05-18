@@ -398,6 +398,7 @@ class shimTool():
                     self.expectedB0Map[:,i,:] = np.nan
             self.gui.currentsComputedMarker.setChecked(True)
             self.applyMask()
+            self.log("Computed solutions and created new estimate shim maps")
         else:
             self.log("Error: Could not solve for currents. Look at error hopefully in output")
 
@@ -545,8 +546,6 @@ class shimTool():
         self.computeMask()
         self.applyMask()
         self.triggerComputeShimCurrents()
-        self.log(f"all should be false in slice roi mask {self.gui.getShimSliceIndex()} {~(self.gui.ROI.getROIMask()[:,self.gui.getShimSliceIndex(),:].any())}")
-        self.log(f"all should be false in slice final mask {self.gui.getShimSliceIndex()} {~(self.finalMask[:,self.gui.getShimSliceIndex(),:].any())}")
         self.gui.updateShimImageAndStats()
 
 

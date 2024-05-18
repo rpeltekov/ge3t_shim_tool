@@ -261,6 +261,7 @@ class Gui(QMainWindow):
 
         # add another graphics scene visualizer
         # Setup QGraphicsView for image display
+        # TODO issue #7 add a function to do all this and also make the color bar inherent
         self.shimViewLabel = QLabel()
         self.shimView = ImageViewer(self, self.shimViewLabel)
         layout.addWidget(self.shimView, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -523,11 +524,9 @@ class Gui(QMainWindow):
     def updateLogOutput(self, log, text):
         log.append(text)
 
-    def setView(self, qImage: QImage, view: ImageViewer, ROI:bool=False):
+    def setView(self, qImage: QImage, view: ImageViewer):
         """Sets the view of the ImageViewer to the given QImage."""
         pixmap = QPixmap.fromImage(qImage)
-        if not ROI:
-            view.qImage = qImage
         view.viewport().setVisible(True)
         view.set_pixmap(pixmap)
         view.setSceneRect(view.pixmap_item.boundingRect())  # Adjust scene size to the pixmap's bounding rect
@@ -548,18 +547,27 @@ class Gui(QMainWindow):
         # if view data is not none, then so should the slice and maxAbs value
         if viewDataSlice is not None:
             # Extract the slice and normalize it
-            normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / (2*self.viewMaxAbs[viewIndex]) * 255
+            scale = self.viewMaxAbs[viewIndex]
+            if viewIndex > 0:
+                # when we are looking at b0maps, the numbers can be negative
+                scale = 2*scale 
+                normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 127 + 127
+            else:
+                normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 255
+            # make the value 127 (correlates to 0 Hz offset) wherever it is outside of mask
+            normalizedData[np.isnan(viewDataSlice)] = 127
             # specific pyqt6 stuff to convert numpy array to QImage
             displayData = np.ascontiguousarray(normalizedData).astype(np.uint8)
-            # make the value 127 (correlates to 0 Hz offset) wherever it is outside of mask
-            displayData[np.isnan(viewDataSlice)] = 127
             # stack 4 times for R, G, B, and alpha value
             rgbData = np.stack((displayData,)*3, axis=-1)
             height, width, _ = rgbData.shape
             bytesPerLine = rgbData.strides[0] 
             qImage = QImage(rgbData.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
             # set the actual view that we care about
+            self.views[viewIndex].qImage = qImage
+            self.views[viewIndex].viewData = viewDataSlice
             self.setView(qImage, self.views[viewIndex])
+
         
     def visualizeROI(self):
         """
@@ -612,7 +620,7 @@ class Gui(QMainWindow):
                 painter.drawPoint(x, y)
             painter.end()
         
-            self.setView(drawingQImage, self.views[0], ROI=True)
+            self.setView(drawingQImage, self.views[0])
     
     def validateROIInput(self):
         """Validate the ROI input sliders and entries."""
