@@ -6,7 +6,7 @@ import time
 from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox, QBoxLayout
 from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal, Qt
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
-from PyQt6.QtGui import QValidator, QImage
+from PyQt6.QtGui import QValidator, QIntValidator, QImage
 from functools import partial
 import numpy as np
 
@@ -135,6 +135,7 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: 
     slider.setValue(0)
 
     entry = QLineEdit()
+    entry.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
     entry.setValidator(entryvalidator)
     entry.setText(str(0))
 
@@ -148,10 +149,10 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: 
     layout.addLayout(labelEntryLayout)
     return slider, entry
 
-def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxVal: int, validator: QValidator, defaultVal:int=None):
+def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxVal: int, defaultVal:int=None):
     slider.setMinimum(minVal)
     slider.setMaximum(maxVal)
-    entry.setValidator(validator)
+    entry.setValidator(QIntValidator(minVal, maxVal))
     if defaultVal is not None:
         slider.setValue(defaultVal)
         entry.setText(str(defaultVal))

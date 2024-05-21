@@ -91,7 +91,11 @@ class exsi:
                         if self.debugging:
                             print(f"EXSI CLIENT Debug: SEND SYNC CURRENT COMMAND, channel {channel} current {current:.2f}")
                         continue
-                    self._send_command(cmd)
+                    if not "WaitImagesReady" in cmd:
+                        # don't send a command if we are just using a dummy message to wait for images to be collected...
+                        self._send_command(cmd)
+                    else:
+                        self.last_command = cmd
                     #TODO: see if this timeout of 60 can be fixed in any way here...
                     ready = self.ready_event.wait(60)
                     if not ready:
@@ -210,6 +214,8 @@ class exsi:
             ready = "ConnectToScanner=ok" in msg
         elif self.last_command.startswith("Scan"):
             ready = "acquisition=complete" in msg
+        elif self.last_command.startswith("WaitImagesReady"):
+            ready = images_ready
         elif self.last_command.startswith("ActivateTask"):
             ready = "ActivateTask=ok" in msg
         elif self.last_command.startswith("SelectTask"):
@@ -354,6 +360,10 @@ class exsi:
     @requireExsiConnected
     def sendSetShimValues(self, x:int, y:int, z:int):
         self.send(f"SetShimValues x={x} y={y} z={z}")
+
+    @requireExsiConnected
+    def sendWaitForImagesCollected(self):
+        self.send(f"WaitImagesReady")
 
     
     def __del__(self):

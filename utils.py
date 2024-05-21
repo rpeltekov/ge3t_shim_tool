@@ -106,7 +106,7 @@ def saveImage(directory, title, b0map, slice_index, vmax, white=False):
         plt.title(name, size=10)
     plt.axis('off')
     
-    fig.savefig(output_path, bbox_inches='tight', transparent=True)
+    fig.savefig(output_path, bbox_inches='tight', transparent=white)
     plt.close(fig)
     return output_path
 
@@ -153,7 +153,7 @@ def saveHistogram(directory, title, data, slice_index):
 def saveHistogramsOverlayed(directory, titles, data, slice_index):
     """Save a histogram of the data of background, estimation, actual overlayed at slice or over Full ROI to a file."""
     fig, ax = plt.subplots()
-    print(F"DEBUG: saving histogram overlayed with data shape: {data.shape}, index: {slice_index}")
+    print(F"UTILS debug: saving histogram overlayed with data shape: {data.shape}, index: {slice_index}")
     if data.shape[0] == 3 or data.shape[0] == 2: # either background and est ; or back, est, and actual
         for i in range(data.shape[0]):
             makesurenottooverwrite = data[i].flatten()

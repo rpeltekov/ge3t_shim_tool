@@ -64,10 +64,12 @@ class shimTool():
         self.maxDeltaTE = 2000 # 2000 us = 2 ms
         self.minDeltaTE = 100 # 2000 us = 2 ms
         self.defaultDeltaTE = 500
+        self.minGradientCalStrength = 10 # 100 mA
+        self.maxGradientCalStrength = 200 # 2 A
+        self.linShimFactor = 20 # max 300 -- the value at which to record basis map for lin shims
         self.minCalibrationCurrent = 100 # 100 mA
         self.maxCalibrationCurrent = 2000 # 2 A
         self.defaultCalibrationCurrent = 1000
-        self.linShimFactor = 20 # max 300 -- the value at which to record basis map for lin shims
         self.ogLinShimValues = None # the original linear shim values
 
  
@@ -140,13 +142,13 @@ class shimTool():
     # ----------- Shim Tool Helper Functions ----------- #
 
     def transferScanData(self):
-        self.log(f"Debug: initiating transfer using rsync.")
+        self.log(f"initiating transfer using rsync.")
         if self.exsiInstance.examNumber is None:
             self.log("Error: No exam number found in the exsi client instance.")
             return
         if self.gehcExamDataPath is None:
             self.gehcExamDataPath = setGehcExamDataPath(self.exsiInstance.examNumber, self.config['host'], self.config['hvPort'], self.config['hvUser'], self.config['hvPassword'])
-            self.log(f"Debug: obtained exam data path: {self.gehcExamDataPath}")
+            self.log(f"obtained exam data path: {self.gehcExamDataPath}")
         execRsyncCommand(self.config['hvPassword'], self.config['hvUser'], self.config['host'], self.gehcExamDataPath + '/*', self.localExamRootDir)
 
     def getLatestData(self, stride=1, offset=0):
@@ -155,9 +157,9 @@ class shimTool():
         self.gui.viewData[0] = res[0]
     
     def getROIBackgound(self):
-        self.log('Debug: extracting the background mag image')
+        self.log('extracting the background mag image')
         res = extractBasicImageData(self.backgroundDCMdir, stride=3, offset=0)
-        self.log('Debug: done extracting the background mag image')
+        self.log('done extracting the background mag image')
         self.gui.viewData[0] = res[0]
 
     # ----------- Shim Functions ----------- #
@@ -234,7 +236,7 @@ class shimTool():
         once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps.
         linGrad should be a list of 3 floats if it is not None
         """
-        cvs = {"act_tr": 3300, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
+        cvs = {"act_tr": 5000, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
         for i in range(2):
             self.exsiInstance.sendSelTask()
             self.exsiInstance.sendActTask()
@@ -448,7 +450,7 @@ class shimTool():
             if i == 0:
                 expected += self.solutions[sliceIdx][i] * np.ones(expected.shape)
             else:
-                expected += self.solutions[sliceIdx][i] * self.basisB0maps[i][:,sliceIdx,:]
+                expected += self.solutions[sliceIdx][i] * self.basisB0maps[i-1][:,sliceIdx,:]
 
             np.save(os.path.join(evalDir, f"expected{i}.npy"), expected)
 
@@ -504,7 +506,7 @@ class shimTool():
         self.exsiInstance.sendPatientTable()
         self.exsiInstance.sendScan()
         if not self.exsiInstance.images_ready_event.wait(timeout=120):
-            self.log(f"Debug: scan didn't complete")
+            self.log(f"scan didn't complete")
         else:
             self.exsiInstance.images_ready_event.clear()
             self.transferScanData()
@@ -523,15 +525,15 @@ class shimTool():
     @disableSlowButtonsTillDone
     def getAndSetROIImageWork(self, trigger: Trigger):
         if self.gui.getROIBackgroundSelected() == 1:
-            self.log("Debug: Getting background image") 
+            self.log("Getting background image") 
             self.getROIBackgound()
         else:
-            self.log("Debug: Getting latest image") 
+            self.log("Getting latest image") 
             self.transferScanData()
             if os.path.exists(self.localExamRootDir):
                 self.getLatestData(stride=1)
             else:
-                self.log("Debug: local directory has not been made yet...")
+                self.log("local directory has not been made yet...")
         trigger.finished.emit()
     @requireExsiConnection
     def doGetAndSetROIImage(self):
@@ -619,7 +621,7 @@ class shimTool():
     @requireShimConnection
     def shimSetAllCurrents(self, sliceIdx=None):
         if not self.gui.currentsComputedMarker.isChecked() or not self.solutions:
-            self.log("Debug: Need to perform background and loop calibration scans before setting currents.")
+            self.log("Need to perform background and loop calibration scans before setting currents.")
             msg = createMessageBox("Error: Background And Loop Cal Scans not Done",
                                    "Need to perform background and loop calibration scans before setting currents.", 
                                    "You could set them manually if you wish to.")
@@ -705,6 +707,9 @@ class shimTool():
         """Scan with supposed set shims and evaluate how far from expected they are."""
         trigger = Trigger()
         trigger.finished.connect(self.gui.updateShimImageAndStats)
+        if self.solutions[self.gui.getShimSliceIndex()] is None:
+            self.log("Error: No solutions computed for this slice.")
+            return
         kickoff_thread(self.waitdoEvalAppliedShims, args=(trigger,))
         def queueAll():
             # perform the calibration scans for the linear gradients
@@ -713,6 +718,8 @@ class shimTool():
             self.exsiInstance.sendSetCenterFrequency(newCF)
             self.queueBasisPairScan()
 
+            # need to wait for the previous scan to return all the images before doing this...
+            self.exsiInstance.sendWaitForImagesCollected()
             self.exsiInstance.sendSetCenterFrequency(int(self.exsiInstance.ogCenterFreq))
             if self.gui.withLinGradMarker.isChecked():
                 self.queueBasisPairScan(np.array([int(round(apply[1])), 0, 0]))
@@ -758,31 +765,33 @@ class shimTool():
         startindex = None
         numindexes = 0
         for i in range(self.backgroundB0Map.shape[1]):
-            if startindex is None and self.solutions[i] is not None:
-                startindex = i
-            if self.solutions[i] is not None:
+            if self.shimStats[0][i] is not None:
                 numindexes += 1
-        startindex += 1 # chop off the first and last index
-        numindexes -= 2 # chop off the first and last index
+                if startindex is None:
+                    startindex = i
+
         self.log(f"DEBUG: ________________________Do All Shim Scans____________________________________")
         self.log(f"DEBUG: Starting at index {startindex} and doing {numindexes} B0MAPS")
 
-        trigger = Trigger()
-        trigger.finished.connect(self.updateShimImageAndStats)
-        kickoff_thread(self.waitdoAllShimmedScans, args=(trigger,startindex, numindexes))
-        
-        def queueAll():
-            for i in range(startindex, startindex + numindexes):
-                self.shimSetAllCurrents(i) # set all of the currents
-                self.queueBasisPairScan(preset=True)
-        kickoff_thread(queueAll)
+        if numindexes > 0:
+            trigger = Trigger()
+            trigger.finished.connect(self.gui.updateShimImageAndStats)
+            kickoff_thread(self.waitdoAllShimmedScans, args=(trigger,startindex, numindexes))
+            
+            def queueAll():
+                for i in range(startindex, startindex + numindexes):
+                    if i > startindex:
+                        self.exsiInstance.sendWaitForImagesCollected()
+                    self.shimSetAllCurrents(i) # set all of the currents
+                    self.queueBasisPairScan(preset=True)
+            kickoff_thread(queueAll)
 
     def saveResults(self):
         def helper():
             if not self.backgroundB0Map.any():
                 # if the background b0map is not computed, then nothing else is and you can just return
                 return
-            self.log("Debug: saving Images")
+            self.log("saving Images")
 
             # get the time and date
             dt = datetime.now()
@@ -791,33 +800,37 @@ class shimTool():
             self.resultsDir = os.path.join(self.config['rootDir'], "results", self.exsiInstance.examNumber, dt)
             if not os.path.exists(self.resultsDir):
                 os.makedirs(self.resultsDir)
-            self.log(f"Debug: saving results to {self.resultsDir}")
+            self.log(f"Saving results to {self.resultsDir}")
             
             # pack all the data into one easy to work with numpy array
-            data = np.array([np.copy(self.backgroundB0Map), 
-                             np.copy(self.expectedB0Map), 
-                             np.copy(self.shimmedB0Map)], dtype=object)
-            bases = np.array(self.basisB0maps)
+            data = [np.copy(self.backgroundB0Map), 
+                    np.copy(self.expectedB0Map), 
+                    np.copy(self.shimmedB0Map)]
+            bases = [np.copy(m) for m in self.basisB0maps]
             labels = ["Background", "Expected", "Shimmed"]
 
             lastNotNone = 0
+            vmax = 0
             # apply mask to all of the data
             self.computeMask()
             for i in range(3):
                 if data[i] is not None:
                     lastNotNone = i
                     data[i][~self.finalMask] = np.nan
+                    vmax = max(vmax, np.nanmax(np.abs(data[i])))
 
-            data = data[:lastNotNone+1] # only save data that has been collected so far
+            data = data[:lastNotNone+1] # only save data that has been collected so far (PRUNE THE NONEs)
 
-            for i in range(bases.shape[0]): 
+            for i in range(len(bases)): 
                 if bases[i] is not None:
+                    lastNotNone = i
                     bases[i][~self.finalMask] = np.nan
-
-            vmax = np.nanmax(np.abs(data))
+                    vmax = max(vmax, np.nanmax(np.abs(bases[i])))
+            
+            bases = bases[:lastNotNone+1] # only save basismaps that have been collected so far (PRUNE THE NONEs)
 
             # save individual images and stats
-            for i in range(data.shape[0]):
+            for i in range(len(data)):
                 imageTypeSaveDir = os.path.join(self.resultsDir, labels[i])
                 imagesDir = os.path.join(imageTypeSaveDir, 'images')
                 histDir = os.path.join(imageTypeSaveDir, 'histograms')
@@ -825,51 +838,54 @@ class shimTool():
                     if not os.path.exists(d):
                         os.makedirs(d)
 
-                self.log(f"Debug: saving slice images and histograms for {labels[i]}")
+                self.log(f"Saving slice images and histograms for {labels[i]}")
                 for j in range(data[0].shape[1]):
                     # save a perslice B0Map image and histogram
                     if not np.isnan(data[i][:,j,:]).all():
                         saveImage(imagesDir, labels[i], data[i][:,j,:], j, vmax)
                         saveHistogram(histDir, labels[i], data[i][:,j,:], j)
                 
-                self.log(f"Debug: saving stats for {labels[i]}")
+                self.log(f"Saving stats for {labels[i]}")
                 # save all the slicewise stats, appended into one file
                 saveStats(imageTypeSaveDir, labels[i], self.shimStatStrs[i])
                 # generate and then save volume wise stats
                 stats, statarr = evaluate(data[i].flatten(), self.debugging)
                 saveStats(imageTypeSaveDir, labels[i], stats, volume=True)
 
-                self.log(f"Debug: saving volume stats for {labels[i]}")
+                self.log(f"Saving volume stats for {labels[i]}")
                 # save volume wise histogram 
                 saveHistogram(imageTypeSaveDir, labels[i], data[i], -1)
             
-            for i in range(bases.shape[0]):
+            for i in range(len(bases)):
                 if bases[i] is not None:
                     basesDir = os.path.join(self.resultsDir, "basisMaps")
                     baseDir = os.path.join(basesDir, f"basis{i}")
                     for d in [basesDir, baseDir]:
                         if not os.path.exists(d):
                             os.makedirs(d)
-                    for j in range(bases.shape[1]):
-                        saveImage(baseDir, f"basis{i}", bases[i][:,j,:], j, vmax)
+                    for j in range(bases[i].shape[1]):
+                        if not np.isnan(bases[i][:,j,:]).all():
+                            saveImage(baseDir, f"basis{i}", bases[i][:,j,:], j, vmax)
             
             # save the histogram  all images overlayed
-            if data.shape[0] >= 2:
-                self.log(f"Debug: saving overlayed volume stats for ROI")
+            if len(data) >= 2:
+                self.log(f"Saving overlayed volume stats for ROI")
+                data = np.array(data)
                 # for the volume entirely
                 saveHistogramsOverlayed(self.resultsDir, labels, data, -1)
                 # for each slice independently
                 overlayHistogramDir = os.path.join(self.resultsDir, 'overlayedHistogramPerSlice')
                 if not os.path.exists(overlayHistogramDir):
                     os.makedirs(overlayHistogramDir)
-                for j in range(self.data[0].shape[1]):
-                    saveHistogramsOverlayed(overlayHistogramDir, labels, data[:,:,j,:], j)
+                for j in range(data[0].shape[1]):
+                    if not np.isnan(data[0][:,j,:]).all():
+                        saveHistogramsOverlayed(overlayHistogramDir, labels, data[:,:,j,:], j)
             
             # save the numpy data
             np.save(os.path.join(self.resultsDir, 'shimData.npy'), data)
             np.save(os.path.join(self.resultsDir, 'shimStats.npy'), self.shimStats)
             np.save(os.path.join(self.resultsDir, 'basis.npy'), bases)
-            self.log(f"Debug: done saving results to {self.resultsDir}")
+            self.log(f"Done saving results to {self.resultsDir}")
         kickoff_thread(helper)
 
 

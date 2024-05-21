@@ -190,7 +190,7 @@ class Gui(QMainWindow):
         self.doCalibrationScanButton = addButtonConnectedToFunction(layout, "Do Calibration Scan", self.shimTool.doCalibrationScan)
         self.doFgreScanButton = addButtonConnectedToFunction(layout, "Do FGRE Scan", self.shimTool.doFgreScan)
         self.renderLatestDataButton = addButtonConnectedToFunction(layout, "Render Data", self.shimTool.doGetAndSetROIImage)
-        self.slowButtons += [self.doCalibrationScanButton, self.doFgreScanButton, self.renderLatestDataButton]
+        self.slowButtons += [self.doCalibrationScanButton, self.doFgreScanButton]
 
         # radio button group for selecting which roi view you want to see
         roiVizButtonWindow = QWidget()
@@ -342,15 +342,29 @@ class Gui(QMainWindow):
                                           lambda: None)
         self.shimDeltaTESlider, self.shimDeltaTEEntry = packed
         updateSliderEntryLimits(*packed, self.shimTool.minDeltaTE, self.shimTool.maxDeltaTE, 
-                                QIntValidator(self.shimTool.maxDeltaTE, self.shimTool.maxDeltaTE), 
                                 self.shimTool.defaultDeltaTE)
-        # calibration current slider and entry
-        packed = addLabeledSliderAndEntry(layout, "Calibration Current (mA): ", 
+
+        # calibration strengths 
+        calibrationStrengthView = QHBoxLayout()
+        layout.addLayout(calibrationStrengthView)
+
+        # for the gradient strengths
+        def updateLinShimFactor(): 
+            self.shimTool.linShimFactor = self.shimGradientStrengthSlider.value()
+        packed = addLabeledSliderAndEntry(calibrationStrengthView, "Gradient Cal (tick?): ", 
+                                          QIntValidator(self.shimTool.minGradientCalStrength, self.shimTool.maxGradientCalStrength),
+                                          updateLinShimFactor)
+        self.shimGradientStrengthSlider, self.shimGradientStrengthEntry = packed
+        updateSliderEntryLimits(*packed, self.shimTool.minGradientCalStrength, self.shimTool.maxGradientCalStrength, 
+                                self.shimTool.linShimFactor)
+        
+        # for current slider and entry
+        packed = addLabeledSliderAndEntry(calibrationStrengthView, "Loop Cal (mA): ", 
                                           QIntValidator(self.shimTool.minCalibrationCurrent, self.shimTool.maxCalibrationCurrent),
+                                          # TODO issue #2. this is another spot that these need to be addressed. should be done like above
                                           lambda: None)
         self.shimCalCurrentSlider, self.shimCalCurrentEntry = packed
         updateSliderEntryLimits(*packed, self.shimTool.minCalibrationCurrent, self.shimTool.maxCalibrationCurrent, 
-                                QIntValidator(self.shimTool.minCalibrationCurrent, self.shimTool.maxCalibrationCurrent), 
                                 self.shimTool.defaultCalibrationCurrent)
         self.slowButtons += [self.shimDeltaTESlider, self.shimDeltaTEEntry, self.shimCalCurrentSlider, self.shimCalCurrentEntry]
 
@@ -430,7 +444,7 @@ class Gui(QMainWindow):
                                                                                      "Basis Function Index (Int): ", 
                                                                                      QIntValidator(0, numbasis - 1), 
                                                                                      self.updateBasisView)
-        updateSliderEntryLimits(self.basisFunctionSlider, self.basisFunctionEntry, 0, numbasis - 1, QIntValidator(0, numbasis - 1), 0)
+        updateSliderEntryLimits(self.basisFunctionSlider, self.basisFunctionEntry, 0, numbasis - 1, 0)
 
         # add a label and select for the slice index
         self.basisSliceIndexSlider, self.basisSliceIndexEntry = addLabeledSliderAndEntry(leftLayout, "Slice Index (Int): ", 
@@ -585,7 +599,6 @@ class Gui(QMainWindow):
 
         # Update the ROI values based on the sliders
         for i in range(3):
-            self.log(f"for idx {i} the slider sizes: {self.roiSizeSliders[i].value()}, the slider centers: {self.roiPositionSliders[i].value()}")
             self.ROI.sliderSizes[i] = self.roiSizeSliders[i].value() / self.roiSliderGranularity
             self.ROI.sliderCenters[i] = self.roiPositionSliders[i].value() / self.roiSliderGranularity
         
@@ -600,18 +613,14 @@ class Gui(QMainWindow):
         self.ROI.centers[1] = round(self.ROI.ydim * self.ROI.sliderCenters[1])
         self.ROI.centers[2] = round(self.ROI.zdim * self.ROI.sliderCenters[2])
 
-        self.log(f"the ROI sizes: {self.ROI.sizes}, the centers: {self.ROI.centers}")
-        
         # check if the ROI has been updated
         if old != self.ROI.sizes + self.ROI.centers:
             self.ROI.updated = True
 
         sliceIdx = self.roiSliceIndexSlider.value()
         offsetFromDepthCenter = abs(sliceIdx - self.ROI.centers[2])
-        self.log(f"Offset from depth center: {offsetFromDepthCenter}")
         drawingQImage = qImage.copy()
         if offsetFromDepthCenter <= self.ROI.sizes[2]:
-            self.log(f"abt to try drawing points")
             painter = QPainter(drawingQImage)
             # Set the pen color to red and the brush to a semi transparent red
             painter.setPen(QPen(QBrush(QColor(255, 0, 0, 100)), 1))
@@ -643,7 +652,7 @@ class Gui(QMainWindow):
             # need to set the slider limits
             upperlimit = self.viewData[0].shape[1]-1
             updateSliderEntryLimits(self.roiSliceIndexSlider, self.roiSliceIndexEntry, 
-                                    0, upperlimit, QIntValidator(0, upperlimit))
+                                    0, upperlimit)
                                     # assume that slider value automatically updated to be within bounds
             # need to set viewDataSlice to the desired slice
             self.viewDataSlice[0] = self.viewData[0][:,self.roiSliceIndexSlider.value(),:]
@@ -654,7 +663,7 @@ class Gui(QMainWindow):
         else:
             upperlimit = self.viewData[0].shape[0]-1
             updateSliderEntryLimits(self.roiSliceIndexSlider, self.roiSliceIndexEntry, 
-                                    0, upperlimit, QIntValidator(0, upperlimit))
+                                    0, upperlimit)
                                     # assume that slider value automatically updated to be within bounds
             # need to set viewDataSlice to the desired slice
             self.viewDataSlice[0] = self.viewData[0][self.roiSliceIndexSlider.value()]
@@ -705,7 +714,7 @@ class Gui(QMainWindow):
         # set the limit to the shim slice index slider 
         upperlimit = self.viewData[1][0].shape[1]-1
         updateSliderEntryLimits(self.shimSliceIndexSlider, self.shimSliceIndexEntry,
-                                0, upperlimit, QIntValidator(0, upperlimit))
+                                0, upperlimit)
                                 # assume that slider value automatically updated to be within bounds
         # there is reason to enable the slice index slider now, if it wasn't already
         self.shimSliceIndexSlider.setEnabled(True)
@@ -785,7 +794,7 @@ class Gui(QMainWindow):
         # set the limit to the basis slice index slider
         numslices = self.viewData[2][0].shape[1]-1
         updateSliderEntryLimits(self.basisSliceIndexSlider, self.basisSliceIndexEntry,
-                                0, numslices, QIntValidator(0, numslices))
+                                0, numslices)
 
         # there is reason to enable the slice index slider now, if it wasn't already
         self.basisSliceIndexSlider.setEnabled(True)
