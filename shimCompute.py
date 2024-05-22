@@ -3,10 +3,17 @@ from cvxopt import solvers, matrix
 from dicomUtils import *
 from typing import List
 from utils import *
+from skimage.restoration import unwrap_phase
 
 def compute_b0map(first, second, te1, te2):
     # Naively compute the b0 map using two phase images from the scans with different TEs
-    return np.angle(np.conj(first)*second) / (2*np.pi) / ((te2-te1)*1e-3)
+    angle = np.angle(np.conj(first)*second)
+    nan_mask = np.isnan(angle)
+    angle_filled = np.nan_to_num(angle, nan=0.0)
+    angle = np.ma.array(angle_filled, mask=nan_mask)
+    angle = unwrap_phase(angle)   
+    angle = np.ma.filled(angle, fill_value=np.nan)
+    return  angle / (2*np.pi) / ((te2-te1)*1e-3)
 
 def compute_b0maps(n, localExamRootDir, threshFactor=.4) -> List[np.ndarray]:
     # NOTE: Assumes that n most recent scans are all basis pair scans.

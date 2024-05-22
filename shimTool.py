@@ -61,7 +61,7 @@ class shimTool():
 
 
         # ----------- Shim Tool Parameters ----------- #
-        self.maxDeltaTE = 2000 # 2000 us = 2 ms
+        self.maxDeltaTE = 3500 # 2000 us = 2 ms
         self.minDeltaTE = 100 # 2000 us = 2 ms
         self.defaultDeltaTE = 500
         self.minGradientCalStrength = 10 # 100 mA
@@ -236,7 +236,7 @@ class shimTool():
         once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps.
         linGrad should be a list of 3 floats if it is not None
         """
-        cvs = {"act_tr": 5000, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
+        cvs = {"act_tr": 6000, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
         for i in range(2):
             self.exsiInstance.sendSelTask()
             self.exsiInstance.sendActTask()
@@ -803,18 +803,20 @@ class shimTool():
             self.log(f"Saving results to {self.resultsDir}")
             
             # pack all the data into one easy to work with numpy array
-            data = [np.copy(self.backgroundB0Map), 
-                    np.copy(self.expectedB0Map), 
-                    np.copy(self.shimmedB0Map)]
-            bases = [np.copy(m) for m in self.basisB0maps]
+            data = []
+            bases = []
             labels = ["Background", "Expected", "Shimmed"]
 
             lastNotNone = 0
             vmax = 0
             # apply mask to all of the data
             self.computeMask()
+            refs = [self.backgroundB0Map, 
+                    self.expectedB0Map, 
+                    self.shimmedB0Map]
             for i in range(3):
-                if data[i] is not None:
+                if refs[i] is not None:
+                    data.append(np.copy(refs[i]))
                     lastNotNone = i
                     data[i][~self.finalMask] = np.nan
                     vmax = max(vmax, np.nanmax(np.abs(data[i])))
@@ -822,7 +824,8 @@ class shimTool():
             data = data[:lastNotNone+1] # only save data that has been collected so far (PRUNE THE NONEs)
 
             for i in range(len(bases)): 
-                if bases[i] is not None:
+                if self.basisB0maps[i] is not None:
+                    bases.append(np.copy(self.basisB0maps))
                     lastNotNone = i
                     bases[i][~self.finalMask] = np.nan
                     vmax = max(vmax, np.nanmax(np.abs(bases[i])))
