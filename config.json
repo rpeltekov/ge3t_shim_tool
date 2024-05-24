@@ -1,15 +1,15 @@
 {
-    "rootDir": "",
+    "rootDir": "/home/heartvista/Documents/robert/ge3t_shim_tool/",
     "scannerLog": "logs/scannerLog.txt",
     "shimLog": "logs/arduinoLog.txt",
     "guiLog": "logs/guiLog.txt",
-    "host": "",
-    "hvPort": ,
-    "hvUser": "",
-    "hvPassword": "",
-    "exsiPort": ,
-    "exsiProduct": "",
-    "exsiPasswd": "",
+    "host": "10.0.1.1",
+    "hvPort": 22,
+    "hvUser": "sdc",
+    "hvPassword": "adw2.0",
+    "exsiPort": 8895,
+    "exsiProduct": "newHV",
+    "exsiPasswd": "rTpAtD",
     "shimPort": "/dev/ttyACM1",
     "shimBaudRate": 9600
 }
