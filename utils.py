@@ -11,7 +11,8 @@ def load_config(filename):
 
 def log(msg, stdout=False):
     # record a timestamp and prepend to the message
-
+    # TODO
+    # base log function that every class uses to log to std out and maybe the guiLog? idk, this should be revisited....
     guilog = "logs/guiLog.txt"
     current_time = datetime.now()
     formatted_time = current_time.strftime('%H:%M:%S')
@@ -27,54 +28,6 @@ def kickoff_thread(target, args=()):
     t = threading.Thread(target=target, args=args)
     t.daemon = True
     t.start()
-
-def requireShimConnection(func):
-    """Decorator to check if the EXSI client is connected before running a function."""
-    def wrapper(self, *args, **kwargs):
-        # Check the status of the event
-        if not self.shimInstance.connectedEvent.is_set() and not self.debugging:
-            # Show a message to the user, reconnect shim client.
-            msg = createMessageBox("SHIM Client Not Connected",
-                                   "The SHIM client is still not connected to shim arduino.", 
-                                   "Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\n" +
-                                   "Check that the arduino port is set correctly using serial_finder.sh script.")
-            msg.exec() 
-            # have it close the exsi gui
-            self.close()
-            return
-        return func(self)
-    return wrapper
-
-def requireExsiConnection(func):
-    """Decorator to check if the EXSI client is connected before running a function."""
-    def wrapper(self, *args, **kwargs):
-        # Check the status of the event
-        if not self.exsiInstance.connected_ready_event.is_set() and not self.debugging:
-            # Show a message to the user, reconnect exsi client.
-            msg = createMessageBox("EXSI Client Not Connected", 
-                                   "The EXSI client is still not connected to scanner.", 
-                                   "Closing Client.\nCheck that External Host on scanner computer set to 'newHV'.")
-            msg.exec() 
-            # have it close the exsi gui
-            self.close()
-            return
-        return func(self)
-    return wrapper
-
-def requireAssetCalibration(func):
-    """Decorator to check if the ASSET calibration scan is done before running a function."""
-    def wrapper(self, *args, **kwargs):
-        #TODO(rob): probably better to figure out how to look at existing scan state. somehow check all performed scans on start?
-        if not self.assetCalibrationDone and not self.debugging:
-            self.log("Debug: Need to do calibration scan before running scan with ASSET.")
-            # Show a message to the user, reconnect exsi client.
-            msg = createMessageBox("Asset Calibration Scan Not Performed",
-                                   "Asset Calibration scan not detected to be completed.", 
-                                   "Please perform calibration scan before continuing with this scan")
-            msg.exec() 
-            return
-        return func(self)
-    return wrapper
 
 def launchInThread(func):
     """Decorator to run a function in a separate thread."""

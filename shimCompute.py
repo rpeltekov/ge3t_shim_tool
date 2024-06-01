@@ -58,9 +58,7 @@ def createMask(background: np.ndarray, bases: List[np.ndarray], roi: np.ndarray)
             masks.append(~np.isnan(base))
 
     # then add roi if there is one; should already be boolean mask
-    log(f"DEBUG: ROI is NONE:  {roi is None}", True)
     if roi is not None:
-        log(f"DEBUG: ROI shape {roi.shape}", True)
         masks.append(roi)
 
     # union the masks
@@ -70,7 +68,7 @@ def createMask(background: np.ndarray, bases: List[np.ndarray], roi: np.ndarray)
     
     return mask
 
-def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False) -> np.ndarray:
+def solveCurrents(background, rawBases, mask, gradientCalStrength, loopCalStrength, debug=False, gradientMax_ticks=100, loopMaxCurrent_mA=2000) -> np.ndarray:
     # make a copy so that we can work with that instead
     bases = []
 
@@ -103,11 +101,8 @@ def solveCurrents(background, rawBases, mask, withLinGrad=False, debug=False) ->
     # constraint vectors
     g = np.vstack((np.eye(len(rawBases)+1), -np.eye(len(rawBases)+1))) # plus 4 for cf and 3 lin grads
     h = np.ones(1)*2000 # for the center frequency in hz
-    if withLinGrad: # constraints change based on the presence of linear gradients
-        h = np.concatenate((h, np.ones(3)*3.2934)) # for the linear gradients 
-        h = np.concatenate((h, 2 * np.ones(len(rawBases)-3)))
-    else:
-        h = np.concatenate((h, 2 * np.ones(len(rawBases))))
+    h = np.concatenate((h, gradientMax_ticks / (np.ones(3)*gradientCalStrength))) # for the linear gradients 
+    h = np.concatenate((h, loopMaxCurrent_mA / (np.ones(len(rawBases)-3)*loopCalStrength)))
     h = np.concatenate((h, h)) # double it for the negative constraints
     
     # TODO(rob): fix these debug comments to show less

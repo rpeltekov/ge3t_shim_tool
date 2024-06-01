@@ -2,7 +2,7 @@
 
 
 from datetime import datetime
-import sys, os, pickle, signal
+import sys, os, pickle, signal, code
 import numpy as np
 from typing import List
 
@@ -14,24 +14,28 @@ from shim_client import shim
 from dicomUtils import *
 from shimCompute import *
 from utils import *
-from guiUtils import *
 from gui import *
+
 
 
 class shimTool():
 
-    def __init__(self, config: dict):
+    def __init__(self, useGui=True, debugging=True, configPath: str = None):
         
         # ----------- Shim Tool Essential Attributes ----------- #
-        self.debugging = True 
+        self.debugging = debugging 
+        self.useGui = useGui
 
         self.examDateTime = datetime.now()
         self.examDateString = self.examDateTime.strftime('%Y%m%d_%H%M%S')
 
-        self.config = config
-        self.scannerLog = os.path.join(self.config['rootDir'], config['scannerLog'])
-        self.shimLog = os.path.join(self.config['rootDir'], config['shimLog'])
-        self.guiLog = os.path.join(self.config['rootDir'], config['guiLog'])
+        if not configPath:
+            self.config = load_config('config.json')
+        else:
+            self.config = load_config(configPath)
+        self.scannerLog = os.path.join(self.config['rootDir'], self.config['scannerLog'])
+        self.shimLog = os.path.join(self.config['rootDir'], self.config['shimLog'])
+        self.guiLog = os.path.join(self.config['rootDir'], self.config['guiLog'])
 
         self.latestStateSavePath = os.path.join(self.config['rootDir'], "toolStates", "shimToolLatestState.pkl")
 
@@ -63,14 +67,14 @@ class shimTool():
         # ----------- Shim Tool Parameters ----------- #
         self.maxDeltaTE = 3500 # 2000 us = 2 ms
         self.minDeltaTE = 100 # 2000 us = 2 ms
-        self.defaultDeltaTE = 500
+        self.deltaTE = 3500
         self.minGradientCalStrength = 10 # 100 mA
         self.maxGradientCalStrength = 200 # 2 A
-        self.linShimFactor = 20 # max 300 -- the value at which to record basis map for lin shims
+        self.gradientCalStrength = 60 # max 300 -- the value at which to record basis map for lin shims
+        self.ogLinShimValues = None # the original linear shim values
         self.minCalibrationCurrent = 100 # 100 mA
         self.maxCalibrationCurrent = 2000 # 2 A
-        self.defaultCalibrationCurrent = 1000
-        self.ogLinShimValues = None # the original linear shim values
+        self.loopCalCurrent = 1000 # 1 A
 
  
         # ----------- Shim Tool State ----------- #
@@ -99,6 +103,8 @@ class shimTool():
         # the actual values that will be used to apply the shim currents/ cf offset / lingrad value
         self.solutionValuesToApply: List[np.ndarray] = None # will be in form of Hz, number for the lingrad, and Amps
 
+        # the default ROI object
+        self.ROI = ellipsoidROI()
         # masks
         self.roiMask: np.ndarray = None # 3d boolean mask in the same shape as the background data
         self.finalMask: np.ndarray = None # the intersection of roi, and all nonNan sections of background and basis maps
@@ -107,15 +113,26 @@ class shimTool():
         self.shimStatStrs: List[List[str]] = [None, None, None] # string form stats
         self.shimStats: List[List] = [None, None, None] # numerical form stats
 
+
+        # ----------- Shim Tool GUI Parameters ----------- #
+        # the 3d data for each respective view; they should be cropped with respect to the Final Mask when they are set by the shimTool
+        self.viewData = np.array([None,  # 3D data, unfilled, for roi view
+                                    # three sets of 3D data, unfilled, for shim view (background, estimated, actual)                                   
+                                  np.array([None, None, None], dtype=object),
+                                    # 4D data, unfilled, for basis views
+                                  np.array([None for _ in range(self.shimInstance.numLoops + 3)], dtype=object)], dtype=object)
+
         # ----------- Shim Tool GUI ----------- #
         # main GUI instantiation
-        self.app = QApplication(sys.argv)
-        self.gui = Gui(self.debugging, self, self.exsiInstance, self.shimInstance, self.scannerLog, self.shimLog)
+        if self.useGui:
+            self.app = QApplication(sys.argv)
+            self.gui = Gui(self.debugging, self, self.exsiInstance, self.shimInstance, self.scannerLog, self.shimLog)
 
 
     def run(self):
         # start the gui
-        self.gui.show()
+        if self.useGui:
+            self.gui.show()
 
         # wait for exsi connected to update the name of the GUI application, the tab, and to create the exam data directory
         def waitForExSIConnectedReadyEvent():
@@ -124,20 +141,23 @@ class shimTool():
             self.localExamRootDir = os.path.join(self.config['rootDir'], "data", self.exsiInstance.examNumber)
             if not os.path.exists(self.localExamRootDir):
                 os.makedirs(self.localExamRootDir)
-            self.gui.setWindowAndExamNumber(self.exsiInstance.examNumber, self.exsiInstance.patientName)
-            self.gui.renameTab(self.gui.exsiTab, "ExSI Control")
+            if self.useGui:
+                self.gui.setWindowAndExamNumber(self.exsiInstance.examNumber, self.exsiInstance.patientName)
+                self.gui.renameTab(self.gui.exsiTab, "ExSI Control")
         # wait for the shim drivers connected to update the tab name
         def waitForShimConnectedEvent():
             if not self.shimInstance.connectedEvent.is_set():
                 self.shimInstance.connectedEvent.wait()
-            self.gui.renameTab(self.gui.shimmingTab, "Shim Control")
+            if self.useGui:
+                self.gui.renameTab(self.gui.shimmingTab, "Shim Control")
     
         # let us hope that there isn't some race condition here...
         kickoff_thread(waitForExSIConnectedReadyEvent)
         kickoff_thread(waitForShimConnectedEvent)
 
         # start the PyQt event loop
-        sys.exit(self.app.exec())
+        if self.useGui:
+            sys.exit(self.app.exec())
 
     # ----------- Shim Tool Helper Functions ----------- #
 
@@ -154,15 +174,15 @@ class shimTool():
     def getLatestData(self, stride=1, offset=0):
         latestDCMDir = listSubDirs(self.localExamRootDir)[-1]
         res = extractBasicImageData(latestDCMDir, stride, offset)
-        self.gui.viewData[0] = res[0]
+        self.viewData[0] = res[0]
     
     def getROIBackgound(self):
         self.log('extracting the background mag image')
         res = extractBasicImageData(self.backgroundDCMdir, stride=3, offset=0)
         self.log('done extracting the background mag image')
-        self.gui.viewData[0] = res[0]
+        self.viewData[0] = res[0]
 
-    # ----------- Shim Functions ----------- #
+    # ----------- State Functions ----------- #
 
     def saveState(self):
         """ Save all the state attributes so that they can be reloaded later.
@@ -172,7 +192,7 @@ class shimTool():
         # put all the attributes into a list, and save them to file that you can unpack easy
         attr_names = [
             'assetCalibrationDone', 'autoPrescanDone', 'obtainedBasisMaps', 'computedShimSolutions',
-            'roiEditorEnabled', 'backgroundB0Map', 'rawBasisB0maps', 'basisB0maps', 'expectedB0Map',
+            'roiEditorEnabled', 'backgroundB0Map', 'rawBasisB0maps', 'basisB0maps', 'expectedB0Map', 'viewData'
             'shimmedB0Map', 'solutions', 'solutionValuesToApply', 'roiMask', 'finalMask', 'ogLinShimValues',
             'shimStatStrs', 'shimStats', 'gehcExamDataPath', 'localExamRootDir', 'resultsDir', 'backgroundDCMdir'
         ]
@@ -183,7 +203,8 @@ class shimTool():
 
         with open(self.latestStateSavePath, 'wb') as f:
             pickle.dump(attr_dict, f)
-        self.gui.saveState()
+        if self.useGui:
+            self.gui.saveState()
         
 
     def loadState(self):
@@ -212,116 +233,20 @@ class shimTool():
         self.exsiInstance.ogCenterFreq = attr_dict['ogCenterFreq']
         
         # load all the 
-        self.gui.loadState()
+        if self.useGui:
+            self.gui.loadState()
 
         # re mask / update visualization
         self.applyMask()
-        self.gui.updateAllDisplays()
+        if self.useGui:
+            self.gui.updateAllDisplays()
 
-        
-    def setLinGradients(self, linGrad):
-        """Set the new gradient as offset from the prescan set ones"""
-        if self.ogLinShimValues is not None:
-            linGrad = linGrad + self.ogLinShimValues
-        self.exsiInstance.sendSetShimValues(*linGrad)
-
-    def sendSyncedShimCurrent(self, channel: int, current: float):
-        """Send a shim loop set current command, but via the ExSI client 
-        to ensure that the commands are synced with other exsi commands."""
-        # TODO: adjust for multiple boards
-        self.exsiInstance.send(f"X {channel} {current}")
-
-    def queueBasisPairScanDetails(self, linGrad=None, preset=False):
-        """
-        once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps.
-        linGrad should be a list of 3 floats if it is not None
-        """
-        cvs = {"act_tr": 6000, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
-        for i in range(2):
-            self.exsiInstance.sendSelTask()
-            self.exsiInstance.sendActTask()
-            if linGrad is not None:
-                self.setLinGradients(linGrad)
-            # elif not preset:
-            #     self.setLinGradients(np.array([0,0,0]))
-            for cv in cvs.keys():
-                if cv == "act_te":
-                    if i == 0:
-                        self.exsiInstance.sendSetCV(cv, cvs[cv][0])
-                    else:
-                        self.exsiInstance.sendSetCV(cv, cvs[cv][0] + self.gui.getShimDeltaTE())
-                else:
-                    self.exsiInstance.sendSetCV(cv, cvs[cv])
-            self.exsiInstance.sendPatientTable()
-            if not self.autoPrescanDone:
-                self.exsiInstance.sendPrescan(True)
-                self.autoPrescanDone = True
-            else:
-                self.exsiInstance.sendPrescan(False)
-            self.exsiInstance.sendScan()
-
-    def queueBasisPairScan(self, linGrad=None, preset=False):
-        # Basic basis pair scan. should be used to scan the background
-        self.exsiInstance.sendLoadProtocol("ConformalShimCalibration3")
-        self.queueBasisPairScanDetails(linGrad, preset)
-
-    def queueCaliBasisPairScan(self, channelNum, nonDefaultCurrent=None):
-        if not nonDefaultCurrent:
-            nonDefaultCurrent = self.gui.getShimCalCurrent()
-        # when the exsiclient gets this specific command, it will know to dispatch both the loadProtocol 
-        # command and also a Zero Current and setCurrent to channelNum with calibration current of 1.0
-        self.exsiInstance.send(f'LoadProtocol site path="ConformalShimCalibration3" | {channelNum} {nonDefaultCurrent}')
-        self.queueBasisPairScanDetails()
-        self.log(f"DEBUG: DONE queueing basis paid scan!")
-
-    def countScansCompleted(self, n):
-        """should be 2 for every basis pair scan"""
-        for i in range(n):
-            self.log(f"Checking for failure on last run; On scan {i+1} / {n}")
-            if not self.exsiInstance.no_failures.is_set():
-                self.log("Error: scan failed")
-                self.exsiInstance.no_failures.set()
-                return False
-            self.log(f"No Fail. Waiting for scan to complete, On scan {i+1} / {n}")
-            if not self.exsiInstance.images_ready_event.wait(timeout=90):
-                self.log(f"Error: scan {i+1} / {n} didn't complete within 90 seconds bruh")
-                return False
-            else:
-                self.exsiInstance.images_ready_event.clear()
-                # TODO probably should raise some sorta error here...
-        self.log(f"Done. {n} scans completed!")
-        # after scans get completed, go ahead and get the latest scan data over on this machine...
-        self.transferScanData()
-        return True
-
-    def triggerComputeShimCurrents(self):
-        """if background and basis maps are obtained, compute the shim currents"""
-        if self.gui.doBackgroundScansMarker.isChecked() and self.gui.doLoopCalibrationScansMarker.isChecked():
-            self.expectedB0Map = None
-            self.computeShimCurrents()
-        self.evaluateShimImages()
-
-    def getSolutionsToApply(self):
-        """From the Solutions, set the actual values that will be applied to the shim system."""
-        # cf does not change.
-        self.solutionValuesToApply = [np.copy(self.solutions[i]) 
-                                      if self.solutions[i] is not None 
-                                      else None 
-                                      for i in range(len(self.solutions))]
-        for i in range(len(self.solutions)):
-            if self.solutions[i] is not None:
-                for j in range(1,4):
-                    # update the lingrad values
-                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.linShimFactor
-                for j in range(4, len(self.solutions[i])):
-                    # update the current values
-                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.gui.getShimCalCurrent()
 
     # ----------- Shim Tool Compute Functions ----------- #
 
     def computeMask(self):
         """compute the mask for the shim images"""
-        self.finalMask = createMask(self.backgroundB0Map, self.basisB0maps, self.gui.ROI.getROIMask())
+        self.finalMask = createMask(self.backgroundB0Map, self.basisB0maps, self.ROI.getROIMask())
         self.log(f"Computed Mask from background, basis and ROI.")
     
     def applyMask(self):
@@ -334,13 +259,13 @@ class shimTool():
             if map is not None:
                 toViewer = np.copy(map)
                 toViewer[~self.finalMask] = np.nan
-                self.gui.viewData[1][i] = toViewer
+                self.viewData[1][i] = toViewer
         
         for i, basis in enumerate(self.basisB0maps):
             if basis is not None:
                 toViewer = np.copy(basis)
                 toViewer[~self.finalMask] = np.nan
-                self.gui.viewData[2][i] = toViewer
+                self.viewData[2][i] = toViewer
 
         self.log(f"Masked obtained data and sent to GUI.")
 
@@ -354,9 +279,9 @@ class shimTool():
         self.computeMask()
         self.applyMask()
 
-    def computeBasisB0maps(self):
+    def computeBasisB0maps(self, withLinGradients):
         # assumes that you have just gotten background by queueBasisPairScan
-        if self.gui.withLinGradMarker.isChecked():
+        if withLinGradients:
             self.rawBasisB0maps = compute_b0maps(self.shimInstance.numLoops + 3, self.localExamRootDir)
         else:
             self.rawBasisB0maps = compute_b0maps(self.shimInstance.numLoops, self.localExamRootDir)
@@ -381,7 +306,8 @@ class shimTool():
             #NOTE: the first and last current that is solved will be for an empty slice...
             self.solutions[i] = solveCurrents(self.backgroundB0Map, 
                                              self.basisB0maps, mask, 
-                                             withLinGrad=True, 
+                                             self.gradientCalStrength,
+                                             self.loopCalCurrent,
                                              debug=self.debugging)
 
         self.getSolutionsToApply() # compute the actual values we will apply to the shim system from these solutions
@@ -398,24 +324,19 @@ class shimTool():
                         self.expectedB0Map[:,i,:] += self.solutions[i][j+1] * self.basisB0maps[j][:,i,:]
                 else:
                     self.expectedB0Map[:,i,:] = np.nan
-            self.gui.currentsComputedMarker.setChecked(True)
             self.applyMask()
             self.log("Computed solutions and created new estimate shim maps")
+            return True
         else:
             self.log("Error: Could not solve for currents. Look at error hopefully in output")
+            return False
 
-    def computeShimmedB0Map(self, idx = None):
+    def computeShimmedB0Map(self, idx):
         """Compute the just obtained b0map of the shimmed background, for the specific slice selected"""
         b0maps = compute_b0maps(1, self.localExamRootDir)
         if self.shimmedB0Map is None:
             self.shimmedB0Map = np.full_like(b0maps[0], np.nan)
-
-        if idx is not None:
-            self.shimmedB0Map[:,idx,:] = b0maps[0][:,idx,:]
-        else:
-            idx = self.gui.getShimSliceIndex()
-            self.shimmedB0Map[:,idx,:] = b0maps[0][:,idx,:]
-
+        self.shimmedB0Map[:,idx,:] = b0maps[0][:,idx,:]
         self.applyMask()
     
     def evaluateShimImages(self):
@@ -431,15 +352,13 @@ class shimTool():
                         self.shimStatStrs[i][j] = statsstr
                         self.shimStats[i][j] = stats
     
-    def evaluateAppliedShims(self):
+    def evaluateAppliedShims(self, sliceIdx):
         """
         Compare the expected vs actual performance of every shim loop / linear gradient / CF offset and save the difference.
         Helpful to evaluate if the solutions are actually what is being applied.
         """
         b0maps = compute_b0maps(self.shimInstance.numLoops + 4, self.localExamRootDir)
         for i in range(len(b0maps)):
-            # save actual b0map to an eval folder, within which it says the current slice that we are on...
-            sliceIdx = self.gui.getShimSliceIndex()
             # save the b0map to the eval folder
             evalDir = os.path.join(self.config['rootDir'], "results", self.exsiInstance.examNumber, "eval", f"slice_{sliceIdx}")
             if not os.path.exists(evalDir):
@@ -465,66 +384,193 @@ class shimTool():
             fig.savefig(os.path.join(evalDir, f"difference{i}.png"), bbox_inches='tight', transparent=False)
             plt.close(fig)
 
+    # ----------- SHIM Sub Operations ----------- #
+        
+    def setLinGradients(self, linGrad):
+        """Set the new gradient as offset from the prescan set ones"""
+        if self.ogLinShimValues is not None:
+            linGrad = linGrad + self.ogLinShimValues
+        self.exsiInstance.sendSetShimValues(*linGrad)
+
+    def sendSyncedShimCurrent(self, channel: int, current: float):
+        """Send a shim loop set current command, but via the ExSI client 
+        to ensure that the commands are synced with other exsi commands."""
+        # TODO: adjust for multiple boards
+        self.exsiInstance.send(f"X {channel} {current}")
+
+    def queueBasisPairScanDetails(self, linGrad=None, preset=False, prescan=False):
+        """
+        once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps.
+        linGrad should be a list of 3 floats if it is not None
+        """
+        cvs = {"act_tr": 6000, "act_te": [1104, 1604], "rhrcctrl": 13, "rhimsize": 64}
+        for i in range(2):
+            self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendActTask()
+            if linGrad is not None:
+                self.setLinGradients(linGrad)
+            elif not preset and self.autoPrescanDone:
+                self.setLinGradients(np.array([0,0,0]))
+            for cv in cvs.keys():
+                if cv == "act_te":
+                    if i == 0:
+                        self.exsiInstance.sendSetCV(cv, cvs[cv][0])
+                    else:
+                        self.exsiInstance.sendSetCV(cv, cvs[cv][0] + self.deltaTE)
+                else:
+                    self.exsiInstance.sendSetCV(cv, cvs[cv])
+            self.exsiInstance.sendPatientTable()
+            if not self.autoPrescanDone:
+                self.exsiInstance.prescanDone.clear()
+                self.exsiInstance.sendPrescan(True)
+                self.autoPrescanDone = True
+                self.exsiInstance.send("GetPrescanValues") # get the center frequency
+                if self.exsiInstance.prescanDone.wait(timeout=120):
+                    self.ogLinShimValues = getLastSetGradients(self.config['host'], self.config['hvPort'], self.config['hvUser'], self.config['hvPassword'])
+                else:
+                    # TODO raise the proper error here
+                    self.log("Error: Prescan did not complete in time.")
+            else:
+                self.exsiInstance.sendPrescan(False)
+            self.exsiInstance.sendScan()
+
+    def queueBasisPairScan(self, linGrad=None, preset=False):
+        # Basic basis pair scan. should be used to scan the background
+        self.exsiInstance.sendLoadProtocol("ConformalShimCalibration3")
+        self.queueBasisPairScanDetails(linGrad, preset)
+
+    def queueCaliBasisPairScan(self, channelNum, current=None):
+        if current is not None:
+            current = self.loopCalCurrent
+        # when the exsiclient gets this specific command, it will know to dispatch both the loadProtocol 
+        # command and also a Zero Current and setCurrent to channelNum with calibration current of 1.0
+        self.exsiInstance.send(f'LoadProtocol site path="ConformalShimCalibration3" | {channelNum} {current}')
+        self.queueBasisPairScanDetails()
+        self.log(f"DEBUG: DONE queueing basis paid scan!")
+
+    def countScansCompleted(self, n):
+        """should be 2 for every basis pair scan"""
+        for i in range(n):
+            self.log(f"Checking for failure on last run; On scan {i+1} / {n}")
+            if not self.exsiInstance.no_failures.is_set():
+                self.log("Error: scan failed")
+                self.exsiInstance.no_failures.set()
+                return False
+            self.log(f"No Fail. Waiting for scan to complete, On scan {i+1} / {n}")
+            if not self.exsiInstance.images_ready_event.wait(timeout=90):
+                self.log(f"Error: scan {i+1} / {n} didn't complete within 90 seconds bruh")
+                return False
+            else:
+                self.exsiInstance.images_ready_event.clear()
+                # TODO probably should raise some sorta error here...
+        self.log(f"Done. {n} scans completed!")
+        # after scans get completed, go ahead and get the latest scan data over on this machine...
+        self.transferScanData()
+        return True
+
+    def getSolutionsToApply(self):
+        """From the Solutions, set the actual values that will be applied to the shim system."""
+        # cf does not change.
+        self.solutionValuesToApply = [np.copy(self.solutions[i])
+                                      if self.solutions[i] is not None 
+                                      else None 
+                                      for i in range(len(self.solutions))]
+        for i in range(len(self.solutions)):
+            if self.solutions[i] is not None:
+                for j in range(1,4):
+                    # update the lingrad values
+                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.gradientCalStrength
+                for j in range(4, len(self.solutions[i])):
+                    # update the current values
+                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.loopCalCurrent
+
+    def requireShimConnection(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.shimInstance.connectedEvent.is_set() and not self.debugging:
+                # Show a message to the user, reconnect shim client.
+                if self.useGui:
+                    createMessageBox("SHIM Client Not Connected",
+                                    "The SHIM client is still not connected to shim arduino.", 
+                                    "Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\n" +
+                                    "Check that the arduino port is set correctly using serial_finder.sh script.")
+                # have it close the exsi gui
+                self.close()
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
+
+    def requireExsiConnection(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.exsiInstance.connected_ready_event.is_set() and not self.debugging:
+                # Show a message to the user, reconnect exsi client.
+                if self.useGui:
+                    createMessageBox("EXSI Client Not Connected", 
+                                    "The EXSI client is still not connected to scanner.", 
+                                    "Closing Client.\nCheck that External Host on scanner computer set to 'newHV'.")
+                # have it close the exsi gui
+                self.close()
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
+
+    def requireAssetCalibration(func):
+        """Decorator to check if the ASSET calibration scan is done before running a function."""
+        def wrapper(self, *args, **kwargs):
+            #TODO(rob): probably better to figure out how to look at existing scan state. somehow check all performed scans on start?
+            if not self.assetCalibrationDone and not self.debugging:
+                self.log("Debug: Need to do calibration scan before running scan with ASSET.")
+                # Show a message to the user, reconnect exsi client.
+                if self.useGui:
+                    createMessageBox("Asset Calibration Scan Not Performed",
+                                    "Asset Calibration scan not detected to be completed.", 
+                                    "Please perform calibration scan before continuing with this scan")
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
 
     # ----------- Shim Tool Scan Functions ----------- #
 
-    def shimSetManualCurrent(self):
-        """Set the shim current to the value in the entry."""
-        channel = int(self.gui.shimManualChannelEntry.text())
-        current = float(self.gui.shimManualCurrenEntry.text())
-        self.shimInstance.shimSetCurrentManual(channel, current)
-
-
-    @disableSlowButtonsTillDone
-    def calibrationScanWork(self, trigger: Trigger):
-        self.exsiInstance.sendLoadProtocol("ConformalShimCalibration4")
-        self.exsiInstance.sendSelTask()
-        self.exsiInstance.sendActTask()
-        self.exsiInstance.sendPatientTable()
-        self.exsiInstance.sendScan()
-        if self.exsiInstance.images_ready_event.wait(timeout=120):
-            self.assetCalibrationDone = True
-            self.exsiInstance.images_ready_event.clear()
-            self.transferScanData()
-            self.getLatestData(stride=1)
-        trigger.finished.emit()
     @requireExsiConnection
-    def doCalibrationScan(self):
-        # dont need to do the assetCalibration scan more than once
-        if not self.exsiInstance or self.assetCalibrationDone:
-            return
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateROIImageDisplay)
-        kickoff_thread(self.calibrationScanWork, args=(trigger,))
-    
+    def doCalibrationScan(self, trigger: Trigger = None):
+        if self.exsiInstance and not self.assetCalibrationDone:
+            self.exsiInstance.sendLoadProtocol("ConformalShimCalibration4") # TODO rename the sequences on the scanner
+            self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendActTask()
+            self.exsiInstance.sendPatientTable()
+            self.exsiInstance.sendScan()
+            if self.exsiInstance.images_ready_event.wait(timeout=120):
+                self.assetCalibrationDone = True
+                self.exsiInstance.images_ready_event.clear()
+                self.transferScanData()
+                self.getLatestData(stride=1)
+        if trigger is not None:
+            trigger.finished.emit()
 
-    @disableSlowButtonsTillDone
-    def fgreScanWork(self, trigger: Trigger):
-        self.exsiInstance.sendLoadProtocol("ConformalShimCalibration5")
-        self.exsiInstance.sendSelTask()
-        self.exsiInstance.sendActTask()
-        self.exsiInstance.sendPatientTable()
-        self.exsiInstance.sendScan()
-        if not self.exsiInstance.images_ready_event.wait(timeout=120):
-            self.log(f"scan didn't complete")
-        else:
-            self.exsiInstance.images_ready_event.clear()
-            self.transferScanData()
-            self.getLatestData(stride=1)
-        trigger.finished.emit()
     @requireExsiConnection
     @requireAssetCalibration
-    def doFgreScan(self):
-        if not self.exsiInstance:
-            return
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateROIImageDisplay)
-        kickoff_thread(self.fgreScanWork, args=(trigger,))
- 
+    def doFgreScan(self, trigger: Trigger = None):
+        if self.exsiInstance:
+            self.exsiInstance.sendLoadProtocol("ConformalShimCalibration5")
+            self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendActTask()
+            self.exsiInstance.sendPatientTable()
+            self.exsiInstance.sendScan()
+            if not self.exsiInstance.images_ready_event.wait(timeout=120):
+                self.log(f"scan didn't complete")
+            else:
+                self.exsiInstance.images_ready_event.clear()
+                self.transferScanData()
+                self.getLatestData(stride=1)
+        if trigger is not None:
+            trigger.finished.emit()
 
-    @disableSlowButtonsTillDone
-    def getAndSetROIImageWork(self, trigger: Trigger):
-        if self.gui.getROIBackgroundSelected() == 1:
+    @requireExsiConnection
+    def getAndSetROIImage(self, getBackground:bool=False, trigger:Trigger=None):
+        if getBackground == 1:
             self.log("Getting background image") 
             self.getROIBackgound()
         else:
@@ -534,25 +580,25 @@ class shimTool():
                 self.getLatestData(stride=1)
             else:
                 self.log("local directory has not been made yet...")
-        trigger.finished.emit()
-    @requireExsiConnection
-    def doGetAndSetROIImage(self):
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateROIImageDisplay)
-        kickoff_thread(self.getAndSetROIImageWork, args=(trigger,))
-   
+        if trigger is not None:
+            trigger.finished.emit()
 
-    @disableSlowButtonsTillDone
-    def recomputeCurrentsAndView(self):
+    def recomputeCurrentsAndView(self, trigger:Trigger=None):
         self.computeMask()
         self.applyMask()
-        self.triggerComputeShimCurrents()
-        self.gui.updateShimImageAndStats()
+        if self.backgroundB0Map is not None and self.basisB0maps[0] is not None:
+            self.expectedB0Map = None
+            self.computeShimCurrents()
+        self.evaluateShimImages()
+        if trigger is not None:
+            trigger.finished.emit()
 
 
-    @disableSlowButtonsTillDone
-    def waitBackgroundScan(self, trigger: Trigger):
-        self.gui.doBackgroundScansMarker.setChecked(False)
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
+    def doBackgroundScans(self, trigger:Trigger=None):
+        self.queueBasisPairScan()
         self.shimInstance.shimZero() # NOTE(rob): Hopefully this zeros quicker that the scans get set up...
         self.backgroundB0Map = None
         self.exsiInstance.images_ready_event.clear()
@@ -560,77 +606,56 @@ class shimTool():
             self.transferScanData()
             self.log("DEBUG: just finished all the background scans")
             self.computeBackgroundB0map()
-            # if this is a new background scan and basis maps were obtained, then compute the shim currents
-            self.gui.doBackgroundScansMarker.setChecked(True)
-            self.exsiInstance.send("GetPrescanValues") # get the center frequency
-            self.triggerComputeShimCurrents()
-            self.ogLinShimValues = getLastSetGradients(self.config['host'], self.config['hvPort'], self.config['hvUser'], self.config['hvPassword'])
+            self.evaluateShimImages()
+            if trigger is not None:
+                trigger.success = True
         else:
             self.log("Error: Scans didn't complete")
             self.exsiInstance.images_ready_event.clear()
             self.exsiInstance.ready_event.clear()
-        trigger.finished.emit()
+        if trigger is not None:
+            trigger.finished.emit()
+
     @requireExsiConnection
     @requireShimConnection
     @requireAssetCalibration
-    def doBackgroundScans(self):
-        # Perform the background scans for the shim system.
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateShimImageAndStats)
-        kickoff_thread(self.waitBackgroundScan, args=(trigger,))
-        self.queueBasisPairScan()
-
-
-    @disableSlowButtonsTillDone
-    def waitLoopCalibrtationScan(self, trigger: Trigger):
-        self.gui.doLoopCalibrationScansMarker.setChecked(False)
-        self.shimInstance.shimZero() # NOTE: Hopefully this zeros quicker that the scans get set up...
-        self.rawBasisB0maps = None
-        self.exsiInstance.images_ready_event.clear()
-        num_scans = (self.shimInstance.numLoops + (3 if self.gui.withLinGradMarker.isChecked() else 0)) * 2
-        if self.countScansCompleted(num_scans):
-            self.log("DEBUG: just finished all the calibration scans")
-            self.computeBasisB0maps()
-            # if this is a new background scan and basis maps were obtained, then compute the shim currents
-            self.gui.doLoopCalibrationScansMarker.setChecked(True)
-            self.triggerComputeShimCurrents()
-        else:
-            self.log("Error: Scans didn't complete")
-            self.exsiInstance.images_ready_event.clear()
-            self.exsiInstance.ready_event.clear()
-        trigger.finished.emit()
-    @requireExsiConnection
-    @requireShimConnection
-    @requireAssetCalibration
-    def doLoopCalibrationScans(self):
-        """Perform all the calibration scans for each loop in the shim system."""
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateShimImageAndStats)
-        kickoff_thread(self.waitLoopCalibrtationScan, args=(trigger,))
+    def doBasisCalibrationScans(self, withLinGradients:bool=True, trigger:Trigger=None):
+        """Perform all the calibration scans for each basis in the shim system."""
         def queueAll():
             # perform the calibration scans for the linear gradients
-            if self.gui.withLinGradMarker.isChecked():
-                self.queueBasisPairScan(np.array([self.linShimFactor,0,0]))
-                self.queueBasisPairScan(np.array([0,self.linShimFactor,0]))
-                self.queueBasisPairScan(np.array([0,0,self.linShimFactor]))
+            if withLinGradients:
+                self.queueBasisPairScan(np.array([self.gradientCalStrength,0,0]))
+                self.queueBasisPairScan(np.array([0,self.gradientCalStrength,0]))
+                self.queueBasisPairScan(np.array([0,0,self.gradientCalStrength]))
             for i in range(self.shimInstance.numLoops):
                 self.queueCaliBasisPairScan(i)
         kickoff_thread(queueAll)
 
+        self.shimInstance.shimZero() # NOTE: Hopefully this zeros quicker that the scans get set up...
+        self.rawBasisB0maps = None
+        self.exsiInstance.images_ready_event.clear()
+        num_scans = (self.shimInstance.numLoops + (3 if withLinGradients else 0)) * 2
+        if self.countScansCompleted(num_scans):
+            self.log("DEBUG: just finished all the calibration scans")
+            self.computeBasisB0maps(withLinGradients)
+            # if this is a new background scan and basis maps were obtained, then compute the shim currents
+            self.expectedB0Map = None
+            success = self.computeShimCurrents()
+            if trigger is not None:
+                trigger.success = success # set the success of operation
+            self.evaluateShimImages()
+        else:
+            self.log("Error: Scans didn't complete")
+            self.exsiInstance.images_ready_event.clear()
+            self.exsiInstance.ready_event.clear()
+        if trigger is not None:
+            trigger.finished.emit()
+
 
     @requireShimConnection
-    def shimSetAllCurrents(self, sliceIdx=None):
-        if not self.gui.currentsComputedMarker.isChecked() or not self.solutions:
-            self.log("Need to perform background and loop calibration scans before setting currents.")
-            msg = createMessageBox("Error: Background And Loop Cal Scans not Done",
-                                   "Need to perform background and loop calibration scans before setting currents.", 
-                                   "You could set them manually if you wish to.")
-            msg.exec() 
-            return # do nothing more
+    def setAllShimCurrents(self, sliceIdx, withLinGradients:bool=True, trigger:Trigger=None):
+        """Set all the shim currents to the values that were computed and saved in the solutions array, for the specified slice"""
 
-        self.gui.setAllCurrentsMarker.setChecked(False)
-        if sliceIdx is None:
-            sliceIdx = self.gui.getShimSliceIndex()
         if self.solutions[sliceIdx] is not None:
             # setting center frequency
             newCenterFreq = int(self.exsiInstance.ogCenterFreq) + int(round(self.solutionValuesToApply[sliceIdx][0]))
@@ -638,7 +663,7 @@ class shimTool():
             self.exsiInstance.sendSetCenterFrequency(newCenterFreq)
 
             # setting the linear shims
-            if self.gui.withLinGradMarker.isChecked():
+            if withLinGradients:
                 linGrads = self.solutionValuesToApply[sliceIdx][1:4]
                 linGrads = np.round(linGrads).astype(int)
                 self.setLinGradients(linGrads)
@@ -646,7 +671,7 @@ class shimTool():
             # setting the loop shim currents
             for i in range(self.shimInstance.numLoops):
                 current, solution = 0.0, 0.0
-                if self.gui.withLinGradMarker.isChecked():
+                if withLinGradients:
                     current = self.solutionValuesToApply[sliceIdx][i+4]
                     solution = self.solutions[sliceIdx][i+4]
                 else:
@@ -654,66 +679,40 @@ class shimTool():
                     solution = self.solutions[sliceIdx][i+1]
                 self.log(f"DEBUG: Setting currents for loop {i} to {current:.3f}, bc of solution {solution:.3f}")
                 self.sendSyncedShimCurrent(i%8, current)
-        self.gui.setAllCurrentsMarker.setChecked(True)
+            if trigger is not None:
+                trigger.finished.emit()
 
 
-    @disableSlowButtonsTillDone
-    def waitShimmedScans(self, trigger: Trigger):
-        self.gui.doShimmedScansMarker.setChecked(False)
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
+    def doShimmedScans(self, idx, trigger:Trigger=None):
+        self.queueBasisPairScan(preset=True)
         self.shimmedB0Map = None
         self.exsiInstance.images_ready_event.clear()
         if self.countScansCompleted(2):
-            self.computeShimmedB0Map()
+            self.computeShimmedB0Map(idx)
             self.evaluateShimImages()
-            self.gui.doShimmedScansMarker.setChecked(True)
+            if trigger is not None:
+                trigger.success = True
         else:
             self.log("Error: Scans didn't complete")
             self.exsiInstance.images_ready_event.clear()
             self.exsiInstance.ready_event.clear()
-        trigger.finished.emit()
+        if trigger is not None:
+            trigger.finished.emit()
+
+
     @requireExsiConnection
     @requireShimConnection
     @requireAssetCalibration
-    def doShimmedScans(self):
-        """ Perform another set of scans now that it is shimmed """
-        if not self.gui.setAllCurrentsMarker.isChecked():
-                msg = createMessageBox("Note: Shim Process Not Performed",
-                                       "If you want correct shims, click above buttons and redo.", "")
-                msg.exec() 
-                return
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateShimImageAndStats)
-        kickoff_thread(self.waitShimmedScans, args=(trigger,))
-        self.queueBasisPairScan(preset=True)
-
-
-    @disableSlowButtonsTillDone
-    def waitdoEvalAppliedShims(self, trigger: Trigger):
-        self.shimInstance.shimZero()
-        self.exsiInstance.images_ready_event.clear()
-        num_scans = (self.shimInstance.numLoops + (4 if self.gui.withLinGradMarker.isChecked() else 0)) * 2
-        if self.countScansCompleted(num_scans):
-            self.log("DEBUG: just finished all the shim eval scans")
-            self.evaluateAppliedShims()
-        else:
-            self.log("Error: Scans didn't complete")
-            self.exsiInstance.images_ready_event.clear()
-            self.exsiInstance.ready_event.clear()
-        trigger.finished.emit()
-    @requireExsiConnection
-    @requireShimConnection
-    @requireAssetCalibration
-    def doEvalAppliedShims(self):
-        """Scan with supposed set shims and evaluate how far from expected they are."""
-        trigger = Trigger()
-        trigger.finished.connect(self.gui.updateShimImageAndStats)
-        if self.solutions[self.gui.getShimSliceIndex()] is None:
+    def doEvalAppliedShims(self, sliceIdx, withLinGradients:bool=True, trigger:Trigger=None):
+        if self.solutions[sliceIdx] is None:
             self.log("Error: No solutions computed for this slice.")
             return
-        kickoff_thread(self.waitdoEvalAppliedShims, args=(trigger,))
         def queueAll():
             # perform the calibration scans for the linear gradients
-            apply = self.solutionValuesToApply[self.gui.getShimSliceIndex()]
+            apply = self.solutionValuesToApply[sliceIdx]
             newCF = int(self.exsiInstance.ogCenterFreq) + int(round(apply[0]))
             self.exsiInstance.sendSetCenterFrequency(newCF)
             self.queueBasisPairScan()
@@ -721,7 +720,7 @@ class shimTool():
             # need to wait for the previous scan to return all the images before doing this...
             self.exsiInstance.sendWaitForImagesCollected()
             self.exsiInstance.sendSetCenterFrequency(int(self.exsiInstance.ogCenterFreq))
-            if self.gui.withLinGradMarker.isChecked():
+            if withLinGradients:
                 self.queueBasisPairScan(np.array([int(round(apply[1])), 0, 0]))
                 self.queueBasisPairScan(np.array([0, int(round(apply[1])), 0]))
                 self.queueBasisPairScan(np.array([0, 0, int(round(apply[1]))]))
@@ -730,15 +729,60 @@ class shimTool():
                 self.queueCaliBasisPairScan(i, apply[i+4])
         kickoff_thread(queueAll)
 
-
-    @disableSlowButtonsTillDone
-    def waitdoAllShimmedScans(self, trigger: Trigger, start, numindex):
-        self.gui.doAllShimmedScansMarker.setChecked(False)
+        self.shimInstance.shimZero()
         self.exsiInstance.images_ready_event.clear()
+        num_scans = (self.shimInstance.numLoops + (4 if withLinGradients else 0)) * 2
+        if self.countScansCompleted(num_scans):
+            self.log("DEBUG: just finished all the shim eval scans")
+            self.evaluateAppliedShims(sliceIdx)
+        else:
+            self.log("Error: Scans didn't complete")
+            self.exsiInstance.images_ready_event.clear()
+            self.exsiInstance.ready_event.clear()
+        if trigger:
+            trigger.finished.emit()
 
-        for idx in range(start, start+numindex):
+
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
+    def doAllShimmedScans(self, withLinGradients:bool=True, trigger:Trigger=None):
+        if self.expectedB0Map is not None:
+            if trigger is not None:
+                trigger.finished.emit()
+            return
+
+        self.log(f"DEBUG: ________________________Do All Shim Scans____________________________________")
+        # compute how many scans needed, i.e. how many slices are not Nans out of the ROI
+        startIdx = None
+        numindex = 0
+        for i in range(self.backgroundB0Map.shape[1]):
+            if self.shimStats[1][i] is not None:
+                numindex += 1
+                if startIdx is None:
+                    startIdx = i
+        
+        if numindex == 0:
+            self.log("Error: No slices to shim")
+            if trigger is not None:
+                trigger.finished.emit()
+            return
+
+
+        self.log(f"DEBUG: Starting at index {startIdx} and doing {numindex} B0MAPS")
+        self.exsiInstance.images_ready_event.clear()
+        
+        def queueAll():
+            for i in range(startIdx, startIdx + numindex):
+                if i > startIdx:
+                    self.exsiInstance.sendWaitForImagesCollected()
+                self.setAllShimCurrents(i, withLinGradients) # set all of the currents
+                self.queueBasisPairScan(preset=True)
+        kickoff_thread(queueAll)
+
+        for idx in range(startIdx, startIdx+numindex):
             self.log(f"-------------------------------------------------------------")
-            self.log(f"DEBUG: STARTING B0MAP {idx-start+1} / {numindex}; slice {idx}")
+            self.log(f"DEBUG: STARTING B0MAP {idx-startIdx+1} / {numindex}; slice {idx}")
             self.log(f"DEBUG: solutions for this slice are {self.solutions[idx]}")
             self.log(f"DEBUG: applied values for this slice are {self.solutionValuesToApply[idx]}")
             
@@ -748,43 +792,14 @@ class shimTool():
                 def updateVals():
                     self.computeShimmedB0Map(idx)
                     self.evaluateShimImages()
-                    trigger.finished.emit()
+                    if trigger is not None:
+                        trigger.finished.emit()
                 kickoff_thread(updateVals)
             else:
                 self.log("Error: Scans didn't complete")
                 self.exsiInstance.images_ready_event.clear()
                 self.exsiInstance.ready_event.clear()
-    @requireExsiConnection
-    @requireShimConnection
-    @requireAssetCalibration
-    def doAllShimmedScans(self):
-        if not self.gui.currentsComputedMarker.isChecked():
-            return
 
-        # compute how many scans needed, i.e. how many slices are not Nans out of the ROI
-        startindex = None
-        numindexes = 0
-        for i in range(self.backgroundB0Map.shape[1]):
-            if self.shimStats[0][i] is not None:
-                numindexes += 1
-                if startindex is None:
-                    startindex = i
-
-        self.log(f"DEBUG: ________________________Do All Shim Scans____________________________________")
-        self.log(f"DEBUG: Starting at index {startindex} and doing {numindexes} B0MAPS")
-
-        if numindexes > 0:
-            trigger = Trigger()
-            trigger.finished.connect(self.gui.updateShimImageAndStats)
-            kickoff_thread(self.waitdoAllShimmedScans, args=(trigger,startindex, numindexes))
-            
-            def queueAll():
-                for i in range(startindex, startindex + numindexes):
-                    if i > startindex:
-                        self.exsiInstance.sendWaitForImagesCollected()
-                    self.shimSetAllCurrents(i) # set all of the currents
-                    self.queueBasisPairScan(preset=True)
-            kickoff_thread(queueAll)
 
     def saveResults(self):
         def helper():
@@ -886,7 +901,7 @@ class shimTool():
             
             # save the numpy data
             np.save(os.path.join(self.resultsDir, 'shimData.npy'), data)
-            np.save(os.path.join(self.resultsDir, 'shimStats.npy'), self.shimStats)
+            
             np.save(os.path.join(self.resultsDir, 'basis.npy'), bases)
             self.log(f"Done saving results to {self.resultsDir}")
         kickoff_thread(helper)
@@ -895,10 +910,9 @@ class shimTool():
     # ----------- random methods ------------ #
 
     def log(self, message):
-        """Log a message to the GUI log and the shim log."""
+        """Log a message."""
         header = "SHIM TOOL: "
         log(header + message, self.debugging)
-    
 
 def handle_exit(signal_received, frame):
     # Handle any cleanup here
@@ -906,11 +920,21 @@ def handle_exit(signal_received, frame):
     QApplication.quit()
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Launch the app with or without GUI.")
+    parser.add_argument("--no-gui", action="store_true", help="Launch python cli version")
+    parser.add_argument("--quiet", action="store_true", help="Launch the GUI version")
+    args = parser.parse_args()
+    
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
     
     # try:
-    config = load_config('config.json')
-    tool = shimTool(config)
+    print(f"Starting shimTool with {args.no_gui} and {args.quiet}")
+    tool = shimTool(useGui= not args.no_gui, debugging= not args.quiet)
     tool.run()
+    if args.no_gui:
+        code.interact(local=globals())
+        subprocess.run([sys.executable])
 

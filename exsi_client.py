@@ -24,6 +24,7 @@ class exsi:
         self.connected_ready_event = threading.Event()
         self.no_failures = threading.Event() # for when command fails. 
         self.no_failures.set() # set to true initially
+        self.prescanDone = threading.Event() # for when prescan is done
         self.command_queue = queue.Queue()  # Command queue
         self.output_file = output_file
         self.last_command = ""
@@ -239,7 +240,9 @@ class exsi:
             ready = "SetCVs=ok" in msg
         elif self.last_command.startswith("Prescan"):
             if "auto" in self.last_command:
-                ready = "scanner=idle" in msg
+                if "scanner=idle" in msg:
+                    ready = True
+                    self.prescanDone.set()
             elif "skip" in self.last_command:
                 ready = "Prescan=ok" in msg
             elif "values=hide" in self.last_command: # for setting the center frequency

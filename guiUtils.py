@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
 from PyQt6.QtGui import QValidator, QIntValidator, QImage
 from functools import partial
 import numpy as np
+import inspect
 
 class LogMonitorThread(QThread):
     update_log = pyqtSignal(str)
@@ -71,25 +72,14 @@ def createMessageBox(title, text, informativeText):
     msg.setText(text)
     msg.setInformativeText(informativeText)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    return msg
-
-def disableSlowButtonsTillDone(func):
-    """Decorator to wrap around slow button functions to disable other buttons until the function is done."""
-    def wrapper(self, *args, **kwargs):
-        for button in self.gui.slowButtons:
-            button.setEnabled(False)
-        # TODO: figure out a better way to handle args generically, and also debug print
-        if len(args) < 1 or args[0] == False:
-            func(self)
-        else:
-            func(self, *args)
-        for button in self.gui.slowButtons:
-            button.setEnabled(True)
-    return wrapper
+    msg.exec()
 
 class Trigger(QObject):
     """ Class to trigger a signal when a function is finished. """
     finished = pyqtSignal()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.success = False
 
 # ------------ gui objects ------------
 
@@ -181,12 +171,21 @@ def updateEntry(entry: QLineEdit, slider: QSlider, updateFunc):
     """
     index = int(entry.text()) if entry.text() else 0
     slider.setValue(index)
-    updateFunc()
+    if updateFunc:
+        if len(inspect.signature(updateFunc).parameters) > 0:
+            updateFunc(index)
+        else:
+            updateFunc()
+
 
 def updateSlider(entry: QLineEdit, updateFunc, value: int):
     """Update the entry to match the slider, and call the updateFunc with the new value"""
     entry.setText(str(value))
-    updateFunc()
+    if updateFunc:
+        if len(inspect.signature(updateFunc).parameters) > 0:
+            updateFunc(value)
+        else:
+            updateFunc()
 
 # ------------ gui ROI shapes ------------ #
 class ROIObject():
