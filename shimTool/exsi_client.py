@@ -19,6 +19,7 @@ class exsi:
 
         self.counter = 0
         self.running = False
+        self.send_event = threading.Event() # for every time command is sent to scanner
         self.ready_event = threading.Event()
         self.images_ready_event = threading.Event()
         self.connected_ready_event = threading.Event()
@@ -28,6 +29,8 @@ class exsi:
         self.command_queue = queue.Queue()  # Command queue
         self.output_file = output_file
         self.last_command = ""
+
+        self.taskKeys = None # taskKeys starts out None, and is replaced when LoadProtocol is called with all the new taskKeys
         self.examNumber = None
         self.ogCenterFreq = None
         self.newCenterFreq = None
@@ -136,6 +139,7 @@ class exsi:
                 self.images_ready_event.clear()
             # add command directly to queue if nothing is special
             self.command_queue.put(cmd)
+            self.send_event.clear()
 
     def _send_command(self, cmd):     
         if cmd is not None:
@@ -149,6 +153,7 @@ class exsi:
             self.s.send(struct.pack('!I', 0))
             self.s.send(struct.pack('!I', 100))
             self.s.send(tcmd)
+            self.send_event.set()
 
     def receive_loop(self):
         while self.running:
@@ -233,6 +238,7 @@ class exsi:
                 taskKeys = match.group(1).split(',')
                 taskKeys = [int(key.strip()) for key in taskKeys]
                 print(f"EXSI CLIENT DEBUG: Task keys found in message: ", taskKeys)
+                self.taskKeys = taskKeys
                 for task in taskKeys:
                     self.task_queue.put(task)
             # else:
