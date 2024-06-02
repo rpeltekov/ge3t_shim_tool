@@ -30,9 +30,13 @@ class shimTool():
         self.examDateString = self.examDateTime.strftime('%Y%m%d_%H%M%S')
 
         if not configPath:
-            self.config = load_config('config.json')
+            currentPath = os.path.dirname(os.path.realpath(__file__))
+            parentPath = os.path.dirname(currentPath)
+            configPath = os.path.join(parentPath, 'config.json')
+            self.config = load_config(configPath)
         else:
             self.config = load_config(configPath)
+
         self.scannerLog = os.path.join(self.config['rootDir'], self.config['scannerLog'])
         self.shimLog = os.path.join(self.config['rootDir'], self.config['shimLog'])
         self.guiLog = os.path.join(self.config['rootDir'], self.config['guiLog'])
