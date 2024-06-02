@@ -7,7 +7,7 @@ from datetime import datetime
 
 
 class exsi:
-    def __init__(self, host, port, exsiProduct, exsiPasswd, shimZeroFunc, shimCurrentFunc, output_file='scanner_log.txt', debugging=False):
+    def __init__(self, host, port, exsiProduct, exsiPasswd, shimZeroFunc=None, shimCurrentFunc=None, output_file='scanner_log.txt', debugging=False):
         self.debugging = debugging
     
         self.host = host
@@ -38,9 +38,10 @@ class exsi:
         self.task_queue = queue.Queue() 
 
         # function passed from GUI to directly queue a shimSetCurrentManual command
-        self.sendCurrentCmd = lambda channel, current: shimCurrentFunc(channel, current)
-        self.sendZeroCmd = lambda : shimZeroFunc()
-        self.clearShimQueue = lambda : None
+        if shimZeroFunc is not None and shimCurrentFunc is not None:
+            self.sendCurrentCmd = lambda channel, current: shimCurrentFunc(channel, current)
+            self.sendZeroCmd = lambda : shimZeroFunc()
+            self.clearShimQueue = lambda : None
 
         # Clear the Log
         with open(self.output_file, 'w'):
