@@ -9,12 +9,12 @@ from typing import List
 from PyQt6.QtWidgets import QApplication
 
 # Import the custom client classes and util functions
-from exsi_client import exsi
-from shim_client import shim
-from dicomUtils import *
-from shimCompute import *
-from utils import *
-from gui import *
+from shimTool.exsi_client import exsi
+from shimTool.shim_client import shim
+from shimTool.dicomUtils import *
+from shimTool.shimCompute import *
+from shimTool.utils import *
+from shimTool.gui import *
 
 
 
@@ -54,14 +54,11 @@ class shimTool():
                 pass
 
         # ----------- Clients ----------- #
-        # Start the connection to the Shim client.
-        # the requireShimConnection decorator will check if the connection is ready before executing any shim functionality.
-        self.shimInstance = shim(self.config['shimPort'], self.config['shimBaudRate'], self.shimLog, debugging=self.debugging)
+        # Start the connection from the Shim client.
+        self.shimInstance = shim(self.config, self.shimLog, debugging=self.debugging)
 
-        # Start the connection to the scanner client.
-        # The requireExsiConnection decorator will check if the connection is ready before executing any exsi functionality.
-        self.exsiInstance = exsi(self.config['host'], self.config['exsiPort'], self.config['exsiProduct'], self.config['exsiPasswd'],
-                                 self.shimInstance.shimZero, self.shimInstance.shimSetCurrentManual, self.scannerLog, debugging=self.debugging)
+        # Start the connection to the Scanner via ExSI.
+        self.exsiInstance = exsi(self.config, self.shimInstance.shimZero, self.shimInstance.shimSetCurrentManual, self.scannerLog, debugging=self.debugging)
         
         # connect the clear queue commands so that they can be called from the other client
         self.shimInstance.clearExsiQueue = self.exsiInstance.clear_command_queue

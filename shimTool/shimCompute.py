@@ -2,8 +2,8 @@ import numpy as np
 from cvxopt import solvers, matrix
 from dicomUtils import *
 from typing import List
-from utils import *
 from skimage.restoration import unwrap_phase
+from shimTool.utils import *
 
 def compute_b0map(first, second, te1, te2):
     # Naively compute the b0 map using two phase images from the scans with different TEs

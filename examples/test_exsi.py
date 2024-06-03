@@ -8,7 +8,7 @@ import os
 import sys
 
 # Add the parent directory to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.abspath(''), '..')))
 
 from shimTool.exsi_client import exsi
 
@@ -18,18 +18,11 @@ def load_config(filename):
 
 def main():
     # Load config file
-    config = load_config('config.json')
-    
-    # Define log
-    scannerLog = os.path.join(config['rootDir'], config['scannerLog'])
+    config = load_config('../config.json')
     
     # Make a sample EXSI class instance
     # The requireExsiConnection decorator will check if the connection is ready before executing any exsi functionality.
-    exsi_instance = exsi(config['host'],
-                             config['exsiPort'],
-                             config['exsiProduct'],
-                             config['exsiPasswd'],
-                             output_file=scannerLog)
+    exsi_instance = exsi(config)
     exsi_instance.connected_ready_event.wait() 
     
     # Load protocol and get task keys

@@ -3,7 +3,8 @@ from matplotlib import pyplot as plt
 import paramiko, subprocess, os, threading, re
 from datetime import datetime
 import numpy as np
-from guiUtils import *
+
+from shimTool.guiUtils import *
 
 def load_config(filename):
     with open(filename, 'r') as file:

@@ -7,18 +7,17 @@ from datetime import datetime
 
 
 class exsi:
-    def __init__(self, host, port, exsiProduct, exsiPasswd, shimZeroFunc=None, shimCurrentFunc=None, output_file='scanner_log.txt', debugging=False):
+    def __init__(self, config, shimZeroFunc=None, shimCurrentFunc=None, debugging=False, output_file='scanner_log.txt'):
         self.debugging = debugging
-    
-        self.host = host
-        self.port = port
-        self.exsiProduct = exsiProduct
-        self.exsiPasswd = exsiPasswd
+
+        self.host = config['host']
+        self.port = config['exsiPort']
+        self.exsiProduct = config['exsiProduct']
+        self.exsiPasswd  = config['exsiPasswd']
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.settimeout(1)  # Set a timeout of 1 second
 
-        self.counter = 0
-        self.running = False
+        # cond vars
         self.send_event = threading.Event() # for every time command is sent to scanner
         self.ready_event = threading.Event()
         self.images_ready_event = threading.Event()
@@ -26,19 +25,23 @@ class exsi:
         self.no_failures = threading.Event() # for when command fails. 
         self.no_failures.set() # set to true initially
         self.prescanDone = threading.Event() # for when prescan is done
+
+        # queues
         self.command_queue = queue.Queue()  # Command queue
         self.output_file = output_file
         self.last_command = ""
+        # task queue, if a protocol is loaded so that we can run tasks in order
+        # NOTE: "task" as in task numbers related to the individual scanned sequences in an Exam
+        self.task_queue = queue.Queue() 
 
+        # state vars
+        self.counter = 0
+        self.running = False
         self.taskKeys = None # taskKeys starts out None, and is replaced when LoadProtocol is called with all the new taskKeys
         self.examNumber = None
         self.ogCenterFreq = None
         self.newCenterFreq = None
         self.patientName = None
-
-        # task queue, if a protocol is loaded so that we can run tasks in order
-        # NOTE: "task" as in task numbers related to the individual scanned sequences in an Exam
-        self.task_queue = queue.Queue() 
 
         # function passed from GUI to directly queue a shimSetCurrentManual command
         if shimZeroFunc is not None and shimCurrentFunc is not None:

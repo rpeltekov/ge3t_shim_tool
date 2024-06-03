@@ -4,13 +4,13 @@ import queue
 import re
 from datetime import datetime
 
-from utils import launchInThread
+from shimTool.utils import launchInThread
 
 class shim:
-    def __init__(self, port, baudRate, outputFile, defaultTimeout=1, debugging=False):
+    def __init__(self, config, outputFile, defaultTimeout=1, debugging=False):
         self.debugging = debugging
-        self.port = port
-        self.baudRate = baudRate
+        self.port = config['shimPort']
+        self.baudRate = config['shimBaudRate']
         self.outputFile = outputFile
         self.defaultTimeout = defaultTimeout
 
