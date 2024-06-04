@@ -3,16 +3,14 @@ This module contains the GUI for the application.
 Includes both ui instantiation, as well as the logic for populating UI with data
 """
 
-from guiUtils import *
-from utils import *
-import pickle
-from PyQt6.QtWidgets import QMainWindow, QBoxLayout, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton, QGraphicsItem
+import pickle, sys
+from PyQt6.QtWidgets import QApplication, QMainWindow, QBoxLayout, QVBoxLayout, QWidget, QTextEdit, QLabel, QSlider, QHBoxLayout, QLineEdit, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QTabWidget, QCheckBox, QSizePolicy, QButtonGroup, QRadioButton, QGraphicsItem
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QIntValidator, QPainter, QPen, QBrush, QColor
 
-from exsi_client import exsi
-from shim_client import shim
-from shimTool import shimTool
+from shimTool.Tool import Tool
+from shimTool.guiUtils import *
+from shimTool.utils import *
 
 class Gui(QMainWindow):
     """
@@ -21,31 +19,27 @@ class Gui(QMainWindow):
     and performing various operations related to calibration, scanning, and shimming.
     """
 
-    def __init__(self, debugging, shimTool: shimTool, exsiInstance: exsi, shimInstance: shim, scannerLog, shimLog):
+    def __init__(self, config, debugging):
+        self.app = QApplication(sys.argv)
         super().__init__()
 
         # ----- Tool Variables ----- # 
-        self.latestStateSavePath = os.path.join("toolStates", "guiLatestState.pkl")
         self.debugging = debugging # tick this only when you continue to be devving...
-        self.shimTool = shimTool
-        self.exsiInstance = exsiInstance
-        self.shimInstance = shimInstance
-        self.scannerLog = scannerLog
-        self.shimLog = shimLog
+        self.shimTool = Tool(config, self.debugging)
+
 
         # ----- GUI Properties that dont change ----- #
+        self.latestStateSavePath = os.path.join("toolStates", "guiLatestState.pkl")
         # array of buttons that need to be disabled during slow operations in other threads
         self.slowButtons = []
 
         # how fine scrolling you want the ROI sliders to be. 100 is more than enough typically...
         self.roiSliderGranularity = 100
 
+        # ----- GUI Properties that act as state, in addition to all the gui features that hold state ----- #
         # array of views. so that we can generalize update function for all views
         # should be roi view, shim view, and then basis view
         self.views = []
-
-        # ----- GUI Properties that act as state, in addition to all the gui features that hold state ----- #
-
         self.viewDataSlice = np.array([np.nan for _ in range(3)], dtype=object) # three sets of 2D Slice Data that is actually visualized
 
         # the value range for each view
@@ -58,7 +52,33 @@ class Gui(QMainWindow):
 
         # ----- GUI Initialization ----- #
         self.initUI()
+        self.run()
         
+    def run(self):
+        self.show()
+
+        # wait for exsi connected to update the name of the GUI application, the tab, and to create the exam data directory
+        def waitForExSIConnectedReadyEvent():
+            if not self.shimTool.exsiInstance.connected_ready_event.is_set():
+                self.shimTool.exsiInstance.connected_ready_event.wait()
+            self.shimTool.localExamRootDir = os.path.join(self.shimTool.config['rootDir'], "data", self.shimTool.exsiInstance.examNumber)
+            if not os.path.exists(self.shimTool.localExamRootDir):
+                os.makedirs(self.shimTool.localExamRootDir)
+            self.setWindowAndExamNumber(self.shimTool.exsiInstance.examNumber, self.shimTool.exsiInstance.patientName)
+            self.renameTab(self.exsiTab, "ExSI Control")
+        # wait for the shim drivers connected to update the tab name
+        def waitForShimConnectedEvent():
+            if not self.shimTool.shimInstance.connectedEvent.is_set():
+                self.shimTool.shimInstance.connectedEvent.wait()
+            self.renameTab(self.shimmingTab, "Shim Control")
+    
+        # let us hope that there isn't some race condition here...
+        kickoff_thread(waitForExSIConnectedReadyEvent)
+        kickoff_thread(waitForShimConnectedEvent)
+
+        # start the PyQt event loop
+        sys.exit(self.app.exec())
+
 
     ##### GUI LAYOUT RELATED FUNCTIONS #####   
 
@@ -112,11 +132,11 @@ class Gui(QMainWindow):
         self.centralTabWidget.addTab(self.basisTab, "Basis/Performance Visualization")
 
         # Connect the log monitor
-        self.exsiLogMonitorThread = LogMonitorThread(self.scannerLog)
+        self.exsiLogMonitorThread = LogMonitorThread(self.shimTool.scannerLog)
         self.exsiLogMonitorThread.update_log.connect(partial(self.updateLogOutput, self.exsiLogOutput))
         self.exsiLogMonitorThread.start()
 
-        self.shimLogMonitorThread = LogMonitorThread(self.shimLog)
+        self.shimLogMonitorThread = LogMonitorThread(self.shimTool.shimLog)
         self.shimLogMonitorThread.update_log.connect(partial(self.updateLogOutput, self.shimLogOutput))
         self.shimLogMonitorThread.start()
     
@@ -176,7 +196,7 @@ class Gui(QMainWindow):
 
     def setupExsiButtonsAndLog(self, layout: QBoxLayout):
         # create the buttons
-        self.reconnectExsiButton = addButtonConnectedToFunction(layout, "Reconnect EXSI", self.exsiInstance.connectExsi)
+        self.reconnectExsiButton = addButtonConnectedToFunction(layout, "Reconnect EXSI", self.shimTool.exsiInstance.connectExsi)
         self.doCalibrationScanButton = addButtonConnectedToFunction(layout, "Do Calibration Scan", self.doCalibrationScan)
         self.doFgreScanButton = addButtonConnectedToFunction(layout, "Do FGRE Scan", self.doFgreScan)
         self.renderLatestDataButton = addButtonConnectedToFunction(layout, "Render Data", self.doGetAndSetROIImage)
@@ -292,16 +312,16 @@ class Gui(QMainWindow):
         manualShimButtonsLayout = QVBoxLayout()
         manualShimLayout.addLayout(manualShimButtonsLayout)
         self.shimCalChannelsButton = addButtonConnectedToFunction(manualShimButtonsLayout, "Calibrate Shim Channels", 
-                                                                  self.shimInstance.shimCalibrate)
+                                                                  self.shimTool.shimInstance.shimCalibrate)
         self.shimZeroButton        = addButtonConnectedToFunction(manualShimButtonsLayout, "Zero Shim Channels", 
-                                                                  self.shimInstance.shimZero)
+                                                                  self.shimTool.shimInstance.shimZero)
         self.shimGetCurrentsButton = addButtonConnectedToFunction(manualShimButtonsLayout, "Get Shim Currents", 
-                                                                  self.shimInstance.shimGetCurrent)
+                                                                  self.shimTool.shimInstance.shimGetCurrent)
         # add the vertical region for channel input, current input, and set current button right of manualShimLayout
         setChannelCurrentShimLayout = QVBoxLayout()
         manualShimLayout.addLayout(setChannelCurrentShimLayout)
         self.shimManualChannelEntry = addEntryWithLabel(setChannelCurrentShimLayout, "Channel Index (Int): ", 
-                                                        QIntValidator(0, self.shimInstance.numLoops-1))
+                                                        QIntValidator(0, self.shimTool.shimInstance.numLoops-1))
         self.shimManualCurrenEntry = addEntryWithLabel(setChannelCurrentShimLayout, "Current (A): ", 
                                                        QDoubleValidator(-2.4, 2.4, 2))
         self.shimManualSetCurrentButton = addButtonConnectedToFunction(setChannelCurrentShimLayout, "Shim: Set Currents", 
@@ -433,7 +453,7 @@ class Gui(QMainWindow):
         self.views += [self.basisView]
 
         # add a slider for selecting the basis function
-        numbasis = self.shimInstance.numLoops + 3
+        numbasis = self.shimTool.shimInstance.numLoops + 3
         self.basisFunctionSlider, self.basisFunctionEntry = addLabeledSliderAndEntry(leftLayout, 
                                                                                      "Basis Function Index (Int): ", 
                                                                                      QIntValidator(0, numbasis - 1), 
@@ -472,6 +492,7 @@ class Gui(QMainWindow):
 
     def saveState(self):
         """Save the current state of the GUI."""
+        self.shimTool.saveState()
 
         for attr in self.state.keys():
             if attr != 'checkboxes':
@@ -489,6 +510,9 @@ class Gui(QMainWindow):
 
     def loadState(self):
         """Load the latest saved state of the GUI. Then run all the update functions with respect to the new data"""
+    
+        self.shimTool.loadState()
+        
         # return if a last save file doesn't exist
         if not os.path.exists(self.latestStateSavePath):
             return
@@ -500,6 +524,10 @@ class Gui(QMainWindow):
             for checkboxName, value in self.state['checkboxes'].items():
                 self.log(f"Seting {checkboxName} to {value}")
                 getattr(self, checkboxName).setChecked(value)
+            
+        # re mask / update visualization
+        self.shimTool.applyMask()
+        self.updateAllDisplays()
 
     # ---------- Update Functions ---------- #
     def renameTab(self, tab, tabName):
@@ -737,8 +765,8 @@ class Gui(QMainWindow):
         shimtxt = ""
         if self.shimTool.ogLinShimValues is not None:
             shimtxt += f"Default lin gradient shims = {self.shimTool.ogLinShimValues}"
-        if self.exsiInstance.ogCenterFreq is not None:
-            shimtxt += f" | OG CF = {self.exsiInstance.ogCenterFreq} Hz"
+        if self.shimTool.exsiInstance.ogCenterFreq is not None:
+            shimtxt += f" | OG CF = {self.shimTool.exsiInstance.ogCenterFreq} Hz"
         self.doShimProcedureLabel.setText(f"SHIM OPERATIONS; " + shimtxt)
 
         # if currents are available
@@ -746,7 +774,7 @@ class Gui(QMainWindow):
             if self.shimTool.solutionValuesToApply[sliceIndex] is not None:
                 solutions = self.shimTool.solutionValuesToApply[sliceIndex]
                 text = f"Δcf:{int(round(solutions[0]))}|"
-                numIter = self.shimInstance.numLoops + 3
+                numIter = self.shimTool.shimInstance.numLoops + 3
                 pref = ["X", "Y", "Z"]
                 for i in range(numIter):
                     if i < 3:
@@ -818,6 +846,49 @@ class Gui(QMainWindow):
             func(self)
         return wrapper
 
+    def requireShimConnection(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.shimTool.shimInstance.connectedEvent.is_set() and not self.debugging:
+                # Show a message to the user, reconnect shim client.
+                createMessageBox("SHIM Client Not Connected",
+                                "The SHIM client is still not connected to shim arduino.", 
+                                "Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\n" +
+                                "Check that the arduino port is set correctly using serial_finder.sh script.")
+                self.close()
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
+
+    def requireExsiConnection(func):
+        """Decorator to check if the EXSI client is connected before running a function."""
+        def wrapper(self, *args, **kwargs):
+            # Check the status of the event
+            if not self.shimTool.exsiInstance.connected_ready_event.is_set() and not self.debugging:
+                # Show a message to the user, reconnect exsi client.
+                createMessageBox("EXSI Client Not Connected", 
+                                "The EXSI client is still not connected to scanner.", 
+                                "Closing Client.\nCheck that External Host on scanner computer set to 'newHV'.")
+                self.close()
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
+
+    def requireAssetCalibration(func):
+        """Decorator to check if the ASSET calibration scan is done before running a function."""
+        def wrapper(self, *args, **kwargs):
+            #TODO(rob): probably better to figure out how to look at existing scan state. somehow check all performed scans on start?
+            if not self.shimTool.assetCalibrationDone and not self.debugging:
+                self.log("Debug: Need to do calibration scan before running scan with ASSET.")
+                # Show a message to the user, reconnect exsi client.
+                createMessageBox("Asset Calibration Scan Not Performed",
+                                "Asset Calibration scan not detected to be completed.", 
+                                "Please perform calibration scan before continuing with this scan")
+                return
+            return func(self, *args, **kwargs)
+        return wrapper
+
     def enableSlowButtons(self):
         for button in self.slowButtons:
             button.setEnabled(True)
@@ -829,6 +900,7 @@ class Gui(QMainWindow):
         self.shimTool.shimInstance.shimSetCurrentManual(channel, current)
     
     @disableSlowButtonsTillDone
+    @requireExsiConnection
     def doCalibrationScan(self):
         # dont need to do the assetCalibration scan more than once
         trigger = Trigger()
@@ -839,6 +911,8 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.doCalibrationScan, args=(trigger,))
 
     @disableSlowButtonsTillDone
+    @requireExsiConnection
+    @requireAssetCalibration
     def doFgreScan(self):
         trigger = Trigger()
         def action():
@@ -848,6 +922,7 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.doFgreScan, args=(trigger,))
     
     @disableSlowButtonsTillDone
+    @requireExsiConnection
     def doGetAndSetROIImage(self):
         trigger = Trigger()
         def action():
@@ -866,6 +941,9 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.recomputeCurrentsAndView, args=(trigger,))
 
     @disableSlowButtonsTillDone
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
     def doBackgroundScans(self):
         # Perform the background scans for the shim system.
         self.doBackgroundScansMarker.setChecked(False)
@@ -878,6 +956,9 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.doBackgroundScans, args=(trigger,))
 
     @disableSlowButtonsTillDone
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
     def doLoopCalibrationScans(self):
         self.doLoopCalibrationScansMarker.setChecked(False)
         trigger = Trigger()
@@ -890,6 +971,7 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.doBasisCalibrationScans, args=(self.withLinGradMarker.isChecked(), trigger,))
 
     @disableSlowButtonsTillDone
+    @requireShimConnection
     def setAllShimCurrents(self):
         if not self.currentsComputedMarker.isChecked() or self.shimTool.solutions is None:
             self.log("Need to perform background and loop calibration scans before setting currents.")
@@ -906,6 +988,9 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.setAllShimCurrents, args=(self.getShimSliceIndex(), self.withLinGradMarker.isChecked(), trigger,))
 
     @disableSlowButtonsTillDone
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
     def doShimmedScans(self):
         """ Perform another set of scans now that it is shimmed """
         if not self.setAllCurrentsMarker.isChecked():
@@ -922,6 +1007,9 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.doShimmedScans, args=(self.getShimSliceIndex(), trigger,))
 
     @disableSlowButtonsTillDone
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
     def doEvalAppliedShims(self):
         """Scan with supposed set shims and evaluate how far from expected they are."""
         trigger = Trigger()
@@ -932,6 +1020,9 @@ class Gui(QMainWindow):
         kickoff_thread(self.shimTool.doEvalAppliedShims, args=(self.getShimSliceIndex(), self.withLinGradMarker.isChecked(), trigger,))
 
     @disableSlowButtonsTillDone
+    @requireExsiConnection
+    @requireShimConnection
+    @requireAssetCalibration
     def doAllShimmedScans(self):
         trigger = Trigger()
         def action():

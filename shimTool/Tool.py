@@ -2,11 +2,9 @@
 
 
 from datetime import datetime
-import sys, os, pickle, signal, code
+import sys, os, pickle
 import numpy as np
 from typing import List
-
-from PyQt6.QtWidgets import QApplication
 
 # Import the custom client classes and util functions
 from shimTool.exsi_client import exsi
@@ -14,28 +12,19 @@ from shimTool.shim_client import shim
 from shimTool.dicomUtils import *
 from shimTool.shimCompute import *
 from shimTool.utils import *
-from shimTool.gui import *
 
 
 
-class shimTool():
+class Tool():
 
-    def __init__(self, useGui=True, debugging=True, configPath: str = None):
+    def __init__(self, config, debugging=True):
         
         # ----------- Shim Tool Essential Attributes ----------- #
+        self.config = config
         self.debugging = debugging 
-        self.useGui = useGui
 
         self.examDateTime = datetime.now()
         self.examDateString = self.examDateTime.strftime('%Y%m%d_%H%M%S')
-
-        if not configPath:
-            currentPath = os.path.dirname(os.path.realpath(__file__))
-            parentPath = os.path.dirname(currentPath)
-            configPath = os.path.join(parentPath, 'config.json')
-            self.config = load_config(configPath)
-        else:
-            self.config = load_config(configPath)
 
         self.scannerLog = os.path.join(self.config['rootDir'], self.config['scannerLog'])
         self.shimLog = os.path.join(self.config['rootDir'], self.config['shimLog'])
@@ -58,7 +47,7 @@ class shimTool():
         self.shimInstance = shim(self.config, self.shimLog, debugging=self.debugging)
 
         # Start the connection to the Scanner via ExSI.
-        self.exsiInstance = exsi(self.config, self.shimInstance.shimZero, self.shimInstance.shimSetCurrentManual, self.scannerLog, debugging=self.debugging)
+        self.exsiInstance = exsi(self.config, self.shimInstance.shimZero, self.shimInstance.shimSetCurrentManual, debugging=self.debugging, output_file=self.scannerLog)
         
         # connect the clear queue commands so that they can be called from the other client
         self.shimInstance.clearExsiQueue = self.exsiInstance.clear_command_queue
@@ -123,43 +112,6 @@ class shimTool():
                                     # 4D data, unfilled, for basis views
                                   np.array([None for _ in range(self.shimInstance.numLoops + 3)], dtype=object)], dtype=object)
 
-        # ----------- Shim Tool GUI ----------- #
-        # main GUI instantiation
-        if self.useGui:
-            self.app = QApplication(sys.argv)
-            self.gui = Gui(self.debugging, self, self.exsiInstance, self.shimInstance, self.scannerLog, self.shimLog)
-
-
-    def run(self):
-        # start the gui
-        if self.useGui:
-            self.gui.show()
-
-        # wait for exsi connected to update the name of the GUI application, the tab, and to create the exam data directory
-        def waitForExSIConnectedReadyEvent():
-            if not self.exsiInstance.connected_ready_event.is_set():
-                self.exsiInstance.connected_ready_event.wait()
-            self.localExamRootDir = os.path.join(self.config['rootDir'], "data", self.exsiInstance.examNumber)
-            if not os.path.exists(self.localExamRootDir):
-                os.makedirs(self.localExamRootDir)
-            if self.useGui:
-                self.gui.setWindowAndExamNumber(self.exsiInstance.examNumber, self.exsiInstance.patientName)
-                self.gui.renameTab(self.gui.exsiTab, "ExSI Control")
-        # wait for the shim drivers connected to update the tab name
-        def waitForShimConnectedEvent():
-            if not self.shimInstance.connectedEvent.is_set():
-                self.shimInstance.connectedEvent.wait()
-            if self.useGui:
-                self.gui.renameTab(self.gui.shimmingTab, "Shim Control")
-    
-        # let us hope that there isn't some race condition here...
-        kickoff_thread(waitForExSIConnectedReadyEvent)
-        kickoff_thread(waitForShimConnectedEvent)
-
-        # start the PyQt event loop
-        if self.useGui:
-            sys.exit(self.app.exec())
-
     # ----------- Shim Tool Helper Functions ----------- #
 
     def transferScanData(self):
@@ -204,8 +156,6 @@ class shimTool():
 
         with open(self.latestStateSavePath, 'wb') as f:
             pickle.dump(attr_dict, f)
-        if self.useGui:
-            self.gui.saveState()
         
 
     def loadState(self):
@@ -232,15 +182,6 @@ class shimTool():
             
         # Finish applying values not originally in this class
         self.exsiInstance.ogCenterFreq = attr_dict['ogCenterFreq']
-        
-        # load all the 
-        if self.useGui:
-            self.gui.loadState()
-
-        # re mask / update visualization
-        self.applyMask()
-        if self.useGui:
-            self.gui.updateAllDisplays()
 
 
     # ----------- Shim Tool Compute Functions ----------- #
@@ -268,7 +209,7 @@ class shimTool():
                 toViewer[~self.finalMask] = np.nan
                 self.viewData[2][i] = toViewer
 
-        self.log(f"Masked obtained data and sent to GUI.")
+        self.log(f"Masked obtained data and 'sent to GUI.'")
 
 
     def computeBackgroundB0map(self):
@@ -490,14 +431,10 @@ class shimTool():
         def wrapper(self, *args, **kwargs):
             # Check the status of the event
             if not self.shimInstance.connectedEvent.is_set() and not self.debugging:
-                # Show a message to the user, reconnect shim client.
-                if self.useGui:
-                    createMessageBox("SHIM Client Not Connected",
-                                    "The SHIM client is still not connected to shim arduino.", 
-                                    "Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\n" +
-                                    "Check that the arduino port is set correctly using serial_finder.sh script.")
-                # have it close the exsi gui
-                self.close()
+                self.log("SHIM Client Not Connected!" +
+                         "The SHIM client is still not connected to shim arduino." +
+                         "Closing Client.\nCheck that arduino is connected to the HV Computer via USB.\n" +
+                         "Check that the arduino port is set correctly using serial_finder.sh script.")
                 return
             return func(self, *args, **kwargs)
         return wrapper
@@ -507,13 +444,9 @@ class shimTool():
         def wrapper(self, *args, **kwargs):
             # Check the status of the event
             if not self.exsiInstance.connected_ready_event.is_set() and not self.debugging:
-                # Show a message to the user, reconnect exsi client.
-                if self.useGui:
-                    createMessageBox("EXSI Client Not Connected", 
-                                    "The EXSI client is still not connected to scanner.", 
-                                    "Closing Client.\nCheck that External Host on scanner computer set to 'newHV'.")
-                # have it close the exsi gui
-                self.close()
+                self.log("EXSI Client Not Connected!" +
+                         "The EXSI client is still not connected to scanner." +
+                         "Closing Client.\nCheck that External Host on scanner computer set to 'newHV'.")
                 return
             return func(self, *args, **kwargs)
         return wrapper
@@ -524,15 +457,9 @@ class shimTool():
             #TODO(rob): probably better to figure out how to look at existing scan state. somehow check all performed scans on start?
             if not self.assetCalibrationDone and not self.debugging:
                 self.log("Debug: Need to do calibration scan before running scan with ASSET.")
-                # Show a message to the user, reconnect exsi client.
-                if self.useGui:
-                    createMessageBox("Asset Calibration Scan Not Performed",
-                                    "Asset Calibration scan not detected to be completed.", 
-                                    "Please perform calibration scan before continuing with this scan")
                 return
             return func(self, *args, **kwargs)
         return wrapper
-
     # ----------- Shim Tool Scan Functions ----------- #
 
     @requireExsiConnection
@@ -914,28 +841,3 @@ class shimTool():
         """Log a message."""
         header = "SHIM TOOL: "
         log(header + message, self.debugging)
-
-def handle_exit(signal_received, frame):
-    # Handle any cleanup here
-    print('SIGINT or CTRL-C detected. Trying to exit gracefully.')
-    QApplication.quit()
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Launch the app with or without GUI.")
-    parser.add_argument("--no-gui", action="store_true", help="Launch python cli version")
-    parser.add_argument("--quiet", action="store_true", help="Launch the GUI version")
-    args = parser.parse_args()
-    
-    signal.signal(signal.SIGINT, handle_exit)
-    signal.signal(signal.SIGTERM, handle_exit)
-    
-    # try:
-    print(f"Starting shimTool with {args.no_gui} and {args.quiet}")
-    tool = shimTool(useGui= not args.no_gui, debugging= not args.quiet)
-    tool.run()
-    if args.no_gui:
-        code.interact(local=globals())
-        subprocess.run([sys.executable])
-
