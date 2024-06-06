@@ -1,0 +1,19 @@
+/* General Widget Styling */
+/*
+QWidget {
+    background-color: #f0f0f0;
+    font-family: Arial, sans-serif;
+}
+*/
+
+QWidget#withBorder {
+    border: 1px solid black;
+}
+
+QWidget#withBorderDotted {
+    border-top: 1px dashed black;
+    border-bottom: 1px dashed black;
+}
+QWidget#withBorderDottedTop {
+    border-top: 1px dashed black;
+}

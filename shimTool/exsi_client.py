@@ -79,17 +79,6 @@ class exsi:
                     print("EXSI CLIENT DEBUG: Processing command: ", cmd)
                     # check if we need to initialize current switch as well...
                     pattern = r"(\d+)\s(\d+\.\d+)"
-                    if "|" in cmd:
-                        # Proess synced shim current set command for calibration (Zero first, and also load protocol)
-                        cmd = cmd.split(" | ")
-                        cmd, current_cmd = cmd[0], cmd[1]
-                        match = re.match(pattern, current_cmd)
-                        channel = int(match.group(1))
-                        current = float(match.group(2))
-                        if self.debugging:
-                            print(f"EXSI CLIENT Debug: SEND CURRENT COMMAND, channel {channel} current {current:.2f}")
-                        self.sendZeroCmd()
-                        self.sendCurrentCmd(channel, current)
                     if cmd.startswith("X"):
                         # Proess synced shim current set command. shouldn't queue anything else after this
                         match = re.match(pattern, cmd)

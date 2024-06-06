@@ -6,6 +6,7 @@ however, it does look like it is successful in letting you call the exsi client 
 
 import logging
 from shimTool.exsi_client import exsi
+from shimTool.utils import load_config
 import json
 import multiprocessing
 import threading

@@ -254,9 +254,15 @@ class shim:
     
     @launchInThread
     @requireShimDriverConnected
-    def shimSetCurrentManual(self, channel, current, board=0):
+    def shimSetCurrentManual(self, channel, current, board):
         """helper function to set the current for a specific channel on a specific board."""
         self.send(f"X {board} {channel} {current}")
+
+    @launchInThread
+    @requireShimDriverConnected
+    def shimSetCurrentManual(self, channel, current):
+        """helper function to set the current for a specific channel on a specific board."""
+        self.send(f"X {channel // 8} {channel % 8} {current}")
 
 class ShimDriverError(Exception):
     """Exception raised for errors in the Shim Driver."""
