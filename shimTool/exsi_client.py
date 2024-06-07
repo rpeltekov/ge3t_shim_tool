@@ -4,6 +4,8 @@ import threading
 import queue
 import re
 from datetime import datetime
+import numpy as np
+from shimTool.utils import execSSHCommand
 
 
 class exsi:
@@ -14,6 +16,9 @@ class exsi:
         self.port = config['exsiPort']
         self.exsiProduct = config['exsiProduct']
         self.exsiPasswd  = config['exsiPasswd']
+        self.hvPort = config['hvPort']
+        self.hvUser = config['hvUser']
+        self.hvPassword = config['hvPassword']
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.settimeout(1)  # Set a timeout of 1 second
 
@@ -39,8 +44,8 @@ class exsi:
         self.running = False
         self.taskKeys = None # taskKeys starts out None, and is replaced when LoadProtocol is called with all the new taskKeys
         self.examNumber = None
-        self.ogCenterFreq = None
-        self.newCenterFreq = None
+        self.ogCenterFrequency = None
+        self.ogLinearGradients = None
         self.patientName = None
 
         # function passed from GUI to directly queue a shimSetCurrentManual command
@@ -246,11 +251,6 @@ class exsi:
                 ready = "Prescan=ok" in msg
             elif "values=hide" in self.last_command: # for setting the center frequency
                 ready = "Prescan=ok" in msg
-                # extract the new center frequency from the message
-                pattern = r"cf=(\d+)"
-                match = re.search(pattern, msg)
-                if match:
-                    self.newCenterFreq = match.group(1)
         elif self.last_command.startswith("GetExamInfo"):
             if "GetExamInfo=ok" in msg:
                 ref = "0020,0010="
@@ -267,10 +267,11 @@ class exsi:
                 pattern = r"cf=(\d+)"
                 match = re.search(pattern, msg)
                 if match:
-                    self.ogCenterFreq = match.group(1)
-                    print(f"EXSI CLIENT DEBUG: Center frequency found in message: {self.ogCenterFreq}")
+                    self.ogCenterFrequency = match.group(1)
+                    print(f"EXSI CLIENT DEBUG: Center frequency found in message: {self.ogCenterFrequency}")
                 else:
                     print("EXSI CLIENT DEBUG: Center frequency not found in message.")
+                self.getLastSetGradients()
                 ready = True
         elif self.last_command.startswith("SetGrxSlices"):
             ready = True
@@ -306,6 +307,26 @@ class exsi:
             self.s.shutdown(socket.SHUT_RDWR)
             self.s.close()
             print("INFO EXSI CLIENT: socket closed successfully. bye.")
+        
+    
+    def getLastSetGradients(self):
+        # Command to extract the last successful setting of the shim currents
+        print(f"EXSI CLIENT DEBUG: attempting to find the last used gradients")
+        command = "tail -n 100 /usr/g/service/log/Gradient.log | grep 'Prescn Success: AS Success' | tail -n 1"
+        output = execSSHCommand(self.host, self.hvPort, self.hvUser, self.hvPassword, command)
+        if output:
+            last_line = output[0].strip()
+            # Use regex to find X, Y, Z values
+            match = re.search(r'X =\s+(-?\d+)\s+Y =\s+(-?\d+)\s+Z =\s+(-?\d+)', last_line)
+            if match:
+                gradients = [int(match.group(i)) for i in range(1, 4)]
+                print(f"EXSI CLIENT DEBUG: Debug: found that linear shims got set to {gradients}")
+                self.ogLinearGradients = np.array(gradients, dtype=np.float64)
+            else:
+                print(f"EXSI CLIENT DEBUG: no matches!")
+        else:
+            print(f"Debug: failed to find the last used gradients")
+        return None
         
     ##### EXSI CLIENT CONTROL FUNCTIONS #####   
 

@@ -61,7 +61,6 @@ class Tool():
         self.minGradientCalStrength = 10 # 100 mA
         self.maxGradientCalStrength = 200 # 2 A
         self.gradientCalStrength = 60 # max 300 -- the value at which to record basis map for lin shims
-        self.ogLinShimValues = None # the original linear shim values, only reset by autoprescan
         self.minCalibrationCurrent = 100 # 100 mA
         self.maxCalibrationCurrent = 2000 # 2 A
         self.loopCalCurrent = 1000 # 1 A
@@ -70,7 +69,6 @@ class Tool():
  
         # ----------- Shim Tool State ----------- #
         # Scan session attributes
-        self.overwriteBackground = True
         self.autoPrescanDone = False
 
         self.assetCalibrationDone = False
@@ -100,9 +98,7 @@ class Tool():
         self.obtainedSolutions = lambda: self.solutions is not None
         self.obtainedShimmedB0Map = lambda: self.shimmedB0Map is not None
 
-        # this will where previous solutions get stored when fieldmap overwrites
-        # Will only keep these values constant for the duration of one type of shim mode (Volume shimming vs slice shimming)
-        # lets you save the current sols, and recompute new shims on top of this to maybe get a better solution iteratively
+        # this is the base solution that is provided by autoprescan or when user overwrites background with existing solution
         self.principleSols = self.resetPrincipleSols()
 
         self.ROI = ellipsoidROI()
@@ -123,7 +119,7 @@ class Tool():
                                     # 4D data, unfilled, for basis views
                                   np.array([None for _ in range(self.shimInstance.numLoops + 3)], dtype=object)], dtype=object)
 
-    # ----------- Shim Tool Data Collection Functions ----------- #
+    # ----------- Shim Tool Data/State Collection Functions ----------- #
 
     def transferScanData(self):
         self.log(f"initiating transfer using rsync.")
@@ -146,8 +142,6 @@ class Tool():
         self.log('done extracting the background mag image')
         self.viewData[0] = res[0]
 
-    # ----------- State Functions ----------- #
-
     def saveState(self):
         """ Save all the state attributes so that they can be reloaded later.
             Main usecase for this is not having to rescan things so that you can debug the tool faster
@@ -155,15 +149,14 @@ class Tool():
 
         # put all the attributes into a list, and save them to file that you can unpack easy
         attr_names = [
-            'assetCalibrationDone', 'autoPrescanDone', 'overwriteBackground', 'roiEditorEnabled', 'backgroundB0Map', 
+            'assetCalibrationDone', 'autoPrescanDone', 'roiEditorEnabled', 'backgroundB0Map', 
             'rawBasisB0maps', 'basisB0maps', 'expectedB0Map', 'viewData', 'shimmedB0Map', 'solutions', 
-            'solutionValuesToApply', 'principleSols', 'roiMask', 'finalMask', 'ogLinShimValues',
-            'shimStatStrs', 'shimStats', 'gehcExamDataPath', 'localExamRootDir', 'resultsDir', 'backgroundDCMdir'
+            'solutionValuesToApply', 'principleSols', 'roiMask', 'finalMask', 'shimStatStrs', 
+            'shimStats', 'gehcExamDataPath', 'localExamRootDir', 'resultsDir', 'backgroundDCMdir'
         ]
         
         # Create a dictionary to hold your attributes
         attr_dict = {name: getattr(self, name) for name in attr_names if hasattr(self, name)}
-        attr_dict['ogCenterFreq'] = self.exsiInstance.ogCenterFreq
 
         with open(self.latestStateSavePath, 'wb') as f:
             pickle.dump(attr_dict, f)
@@ -194,30 +187,8 @@ class Tool():
             except EOFError as e:
                 self.log(f"ERROR: Failed to load state: {e}")
                 return 
-            
-        # Finish applying values not originally in this class
-        self.exsiInstance.ogCenterFreq = attr_dict['ogCenterFreq']
 
-    def setShimMode(self, mode):
-        """
-        Set the shim mode for the scanner, either Volume or Slice-Wise.
-        This will determine how the shimming is done.
-        """
-        #TODO#20: need to probably do something here and delete old principles or something / reset other things
-        self.shimMode = mode
-
-    def resetPrincipleSols(self):
-        self.principleSols = np.array([0.0 for _ in range(4 + self.shimInstance.numLoops)])
-    
-    def resetShimSols(self):
-        self.solutions = None
-        self.solutionValuesToApply = None
-        self.shimStats = [None, None, None]
-        self.shimStatStrs = [None, None, None]
-        self.expectedB0Map = None 
-        self.shimmedB0Map = None
-
-    # ----------- Shim Tool Compute Functions ----------- #
+    # ----------- Shim Tool management and compute Functions ----------- #
 
     def computeMask(self):
         """compute the mask for the shim images"""
@@ -244,6 +215,38 @@ class Tool():
 
         self.log(f"Masked obtained data and 'sent to GUI.'")
 
+    def setShimMode(self, mode):
+        """
+        Set the shim mode for the scanner, either Volume or Slice-Wise.
+        This will determine how the shimming is done.
+        """
+        self.shimMode = mode
+        self.resetPrincipleSols()
+
+    def resetPrincipleSols(self):
+        self.principleSols = np.array([0.0 for _ in range(4+self.shimInstance.numLoops)], dtype=np.float64)
+        if self.exsiInstance.ogCenterFrequency is not None:
+            self.principleSols[0] = int(self.exsiInstance.ogCenterFrequency)
+        if self.exsiInstance.ogLinearGradients is not None:
+            self.principleSols[1:4] = self.exsiInstance.ogLinearGradients
+    
+    def resetShimSols(self):
+        self.solutions = None
+        self.solutionValuesToApply = None
+        self.shimStats = [None, None, None]
+        self.shimStatStrs = [None, None, None]
+        self.expectedB0Map = None 
+        self.shimmedB0Map = None
+
+    def overwriteBackground(self, sliceIdx=None):
+        """
+        Save the current solution and shimmed scan as the new "background."
+        This will be used as a new background, and all of the "shimmed" scans done till now will be deleted.
+        The solution will also be saved as a "principle solution" as if a prescan was done and it landed at these solved values
+        """
+        self.principleSols = self.principleSols + self.solutionValuesToApply
+        self.backgroundB0Map = self.shimmedB0Map
+        self.resetShimSols()
 
     def computeBackgroundB0map(self):
         # assumes that you have just gotten background by queueBasisPairScan
@@ -372,27 +375,24 @@ class Tool():
                     # update the current values
                     self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.loopCalCurrent
 
-    # ----------- SHIM Sub Operations ----------- #
+    # ----------- SHIM Sub Operations and macro function helpers ----------- #
     def getPrincipleOffset(self, solutionIdx=0):
         return self.principleSols[solutionIdx]
 
-    def setCenterFrequency(self, deltaCF=0, sliceIdx=None):
+    def setCenterFrequency(self, deltaCF=0):
         """Offset the center frequency of the scanner by deltaCF"""
-        if sliceIdx is not None:
-            principleCFOffset = self.getPrincipleOffset(0)
-        newCF = int(self.exsiInstance.ogCenterFreq) + int(round(principleCFOffset + deltaCF))
-        self.log(f"DEBUG: Setting center frequency from {self.exsiInstance.ogCenterFreq} to {newCF}")
+        principleCFOffset = self.getPrincipleOffset(0)
+        newCF = int(round(principleCFOffset + deltaCF))
+        self.log(f"DEBUG: Setting center frequency from {principleCFOffset} to {newCF}")
         self.exsiInstance.sendSetCenterFrequency(newCF)
     
-    def setLinGradients(self, linGrad=[0.0,0.0,0.0], sliceIdx=None):
+    def setLinGradients(self, linGrad=[0.0,0.0,0.0]):
         """Set the new gradient as offset from the prescan set ones"""
         # if lingrad is a list of 3 ints, make them numpy array
         if type(linGrad) == list:
             linGrad = np.array(linGrad, dtype=np.float64)
 
         linGrad += np.array([self.getPrincipleOffset(i) for i in range(1,4)], dtype=np.float64)
-        if self.ogLinShimValues is not None:
-            linGrad += self.ogLinShimValues
         
         linGrad = np.round(linGrad).astype(int)
         self.exsiInstance.sendSetShimValues(*linGrad)
@@ -438,12 +438,7 @@ class Tool():
                 self.exsiInstance.prescanDone.clear()
                 self.exsiInstance.sendPrescan(True)
                 self.autoPrescanDone = True
-                self.exsiInstance.send("GetPrescanValues") # get the center frequency
-                if self.exsiInstance.prescanDone.wait(timeout=120):
-                    self.ogLinShimValues = getLastSetGradients(self.config['host'], self.config['hvPort'], self.config['hvUser'], self.config['hvPassword'])
-                else:
-                    # TODO raise the proper error here
-                    self.log("Error: Prescan did not complete in time.")
+                self.exsiInstance.send("GetPrescanValues") # get the center frequency and the linear gradients that are set
             else:
                 self.exsiInstance.sendPrescan(False)
             self.exsiInstance.sendScan()
@@ -586,16 +581,14 @@ class Tool():
         Perform a fieldmap scan to get the background b0 map.
         This will perform a fieldmap as is currently set in the scanner.
         """
-        if self.overwriteBackground:
-            # save the current solution as the principle solution
-            self.principleSols = self.solutionValuesToApply
-            self.backgroundB0Map = None
-            self.resetShimSols()
             
+        obtainPrinciples = False
         if not self.autoPrescanDone:
             self.resetPrincipleSols()
             self.resetShimSols()
             self.shimInstance.shimZero()
+            obtainPrinciples = True
+
 
         # need to kick this off in a new thread because it waits for the prescan to be completed if it is doing a prescan
         kickoff_thread(self.queueB0MapPairScan) 
@@ -615,6 +608,10 @@ class Tool():
             else:
                 # this scan is replacing the shimmed b0map
                 self.computeShimmedB0Map(sliceIdx)
+            
+            # should set the principle solutions to the current center frequency and linear gradients
+            if obtainPrinciples:
+                self.resetPrincipleSols()
 
             self.evaluateShimImages()
             if trigger is not None:
@@ -635,10 +632,10 @@ class Tool():
         def queueAll():
             # perform the calibration scans for the linear gradients
             for i in range(3):
-                lingrad = [0.0,0.0,0.0]
-                lingrad[i] = self.gradientCalStrength
+                linGrad = [0.0,0.0,0.0]
+                linGrad[i] = self.gradientCalStrength
                 self.queueFieldmapProtocol()
-                self.setLinGradients(lingrad)
+                self.setLinGradients(linGrad=linGrad)
                 self.queueTwoFgreSequences()
 
             for i in range(self.shimInstance.numLoops):
@@ -678,12 +675,10 @@ class Tool():
                 self.log("setting shim but passing here")
                 pass
             # setting center frequency
-            deltaCF = self.solutionValuesToApply[sliceIdx][0]
-            self.setCenterFrequency(deltaCF, sliceIdx)
+            self.setCenterFrequency(deltaCF=self.solutionValuesToApply[sliceIdx][0])
 
             # setting the linear shims
-            linGrads = self.solutionValuesToApply[sliceIdx][1:4]
-            self.setLinGradients(linGrads, sliceIdx)
+            self.setLinGradients(linGrad=self.solutionValuesToApply[sliceIdx][1:4])
                 
             # setting the loop shim currents
             for i in range(self.shimInstance.numLoops):
@@ -703,26 +698,26 @@ class Tool():
         def queueAll():
             # perform the calibration scans for the linear gradients
             deltaCF = self.solutionValuesToApply[sliceIdx][0]
-            self.setCenterFrequency(deltaCF, sliceIdx)
+            self.setCenterFrequency(deltaCF)
             self.setLinGradients()
             self.queueB0MapPairScan()
 
             # need to wait for the previous scan to return all the images before doing this...
             self.exsiInstance.sendWaitForImagesCollected()
-            self.setCenterFrequency(0, sliceIdx)
+            self.setCenterFrequency(0)
 
             apply = self.solutionValuesToApply[sliceIdx]
             for i in range(3):
-                lingrad = [0.0,0.0,0.0]
-                lingrad[i] = apply[1+i]
+                linGrad = [0.0,0.0,0.0]
+                linGrad[i] = apply[1+i]
                 self.queueFieldmapProtocol()
-                self.setLinGradients(lingrad, sliceIdx)
+                self.setLinGradients(linGrad)
                 self.queueTwoFgreSequences()
 
             for i in range(self.shimInstance.numLoops):
                 self.queueFieldmapProtocol()
                 self.sendSyncedLoopSolution(i, sliceIdx=sliceIdx, ZeroOthers=True)
-                self.setLinGradients(sliceIdx=sliceIdx)
+                self.setLinGradients()
                 self.queueTwoFgreSequences()
         kickoff_thread(queueAll)
 

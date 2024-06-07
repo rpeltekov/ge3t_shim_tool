@@ -425,24 +425,19 @@ class Gui(QMainWindow):
         selectHLayout = QHBoxLayout()
         configLayout.addLayout(selectHLayout)
 
+        scanSettingsLayout = QVBoxLayout()
+        selectHLayout.addLayout(scanSettingsLayout)
+
         # add checkboxes for autoprescan and for overwriting the current background 
-        checkboxLayout = QVBoxLayout()
-        selectHLayout.addLayout(checkboxLayout)
         self.doAutoPrescanMarker = QCheckBox("Auto Prescan?")
         self.doAutoPrescanMarker.setChecked(True)
         self.doAutoPrescanMarker.setEnabled(False)
-        checkboxLayout.addWidget(self.doAutoPrescanMarker)
+        scanSettingsLayout.addWidget(self.doAutoPrescanMarker)
         self.doAutoPrescanMarker.stateChanged.connect(self.toggleAutoPrescan)
-
-        self.doOverwriteBackgroundMarker = QCheckBox("Overwrite Background?")
-        self.doOverwriteBackgroundMarker.setChecked(True) # on the first scan we overwrite the background, since there is no background
-        self.doOverwriteBackgroundMarker.setEnabled(False) # this should become checkable when we have the first "actual shimmed background" completed
-        checkboxLayout.addWidget(self.doOverwriteBackgroundMarker)
-        self.doOverwriteBackgroundMarker.stateChanged.connect(self.toggleOverwriteBackground)
 
         # add the radio buttons to select if it is a volume or slice-wise shim operation
         self.volumeSliceShimWidget = QWidget()
-        selectHLayout.addWidget(self.volumeSliceShimWidget)
+        scanSettingsLayout.addWidget(self.volumeSliceShimWidget)
         shimTypeLayout = QVBoxLayout()
         self.volumeSliceShimWidget.setLayout(shimTypeLayout)
         self.volumeSliceShimButtonGroup = QButtonGroup(self.volumeSliceShimWidget)
@@ -455,8 +450,16 @@ class Gui(QMainWindow):
         shimTypeLayout.addWidget(volumeShimRadioButton)
         self.volumeSliceShimButtonGroup.idClicked.connect(self.toggleShimStyleRadio)
 
+        # add buttons that control settings for the scans
+        settingsButtons = QVBoxLayout()
+        selectHLayout.addLayout(settingsButtons)
+
+        self.doOverwriteBackgroundButton = addButtonConnectedToFunction(settingsButtons, "Overwrite Background?", self.toggleOverwriteBackground)
+        self.doOverwriteBackgroundButton.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+        self.doOverwriteBackgroundButton.setEnabled(False) # this should become checkable when we have the first "actual shimmed background" completed
+
         # add the button to recompute shim solutions
-        self.recomputeCurrentsButton = addButtonConnectedToFunction(selectHLayout, "Recompute\nShim Solutions", self.recomputeCurrentsAndView)
+        self.recomputeCurrentsButton = addButtonConnectedToFunction(settingsButtons, "Recompute\nShim Solutions", self.recomputeCurrentsAndView)
         self.recomputeCurrentsButton.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         # set this to false to begin with because the currents are not computed yet
         self.recomputeCurrentsButton.setEnabled(False) # enables when the currents are computed i.e. basis map button is done
@@ -625,8 +628,9 @@ class Gui(QMainWindow):
     def toggleAutoPrescan(self, state):
         self.shimTool.autoPrescanDone = not (state == 2) # set it to not done so it gets set next time
 
-    def toggleOverwriteBackground(self, state):
-        self.shimTool.overwriteBackground = state == 2 # set it to so it gets set next time
+    def toggleOverwriteBackground(self):
+        self.shimTool.overwriteBackground()
+        self.updateShimImageAndStats()
     
     def toggleShimStyleRadio(self, id):
         self.shimTool.shimMode = id
@@ -831,10 +835,11 @@ class Gui(QMainWindow):
         # update the checkbox configurations after the latest scan
         if self.shimTool.obtainedBackground():
             self.doAutoPrescanMarker.setEnabled(True)
-            self.doOverwriteBackgroundMarker.setEnabled(True)
+            self.doOverwriteBackgroundButton.setEnabled(True)
+            self.recomputeCurrentsButton.setEnabled(True)
+            self.setShimButton.setEnabled(True)
 
         self.doAutoPrescanMarker.setChecked(not self.shimTool.autoPrescanDone)
-        self.doOverwriteBackgroundMarker.setChecked(self.shimTool.overwriteBackground)
 
         # update the rest of the stats
                 
@@ -853,13 +858,11 @@ class Gui(QMainWindow):
             self.shimStatText[i].setText(text)
 
         # if original gradients / original center frequency available 
-        shimtxt = ""
-        if self.shimTool.exsiInstance.ogCenterFreq is not None:
-            cf = int(self.shimTool.exsiInstance.ogCenterFreq) + int(self.shimTool.getPrincipleOffset(0))
-            shimtxt += f"OG CF = {cf} Hz | "
-        if self.shimTool.ogLinShimValues is not None:
+        shimtxt = "Principle Sols: "
+        if self.shimTool.exsiInstance.ogCenterFrequency is not None:
+            shimtxt += f"OG CF = {int(self.shimTool.getPrincipleOffset(0))} Hz | "
+        if self.shimTool.exsiInstance.ogLinearGradients is not None:
             lingrad = np.array([self.shimTool.getPrincipleOffset(i) for i in range(1, 4)])
-            lingrad += np.array(self.shimTool.ogLinShimValues)
             shimtxt += f"Default lin gradient shims = {lingrad}"
         self.doShimProcedureLabel.setText(f"SHIM OPERATIONS; " + shimtxt)
 
@@ -1062,8 +1065,6 @@ class Gui(QMainWindow):
             return
         trigger = Trigger()
         def actionAndUpdate():
-            self.recomputeCurrentsButton.setEnabled(True)
-            self.setShimButton.setEnabled(True)
             self.updateShimImageAndStats()
             self.enableSlowButtons()
         trigger.finished.connect(actionAndUpdate)
