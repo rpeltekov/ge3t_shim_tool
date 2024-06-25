@@ -2,6 +2,16 @@
 File for all the Utility functions for the GUI
 """
 
+import time
+from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox, QBoxLayout
+from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal, Qt
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
+from PyQt6.QtGui import QValidator, QIntValidator, QImage
+from functools import partial
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import numpy as np
+import numpy as np
 import inspect
 import time
 from functools import partial
@@ -23,6 +33,28 @@ from PyQt6.QtWidgets import (
     QSlider,
 )
 
+
+class ColorBar(QGraphicsView):
+    def __init__(self, parent=None):
+        super(ColorBar, self).__init__(parent)
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+        self.colorbar_item = None
+        self.update_colorbar(np.array([]))
+
+    def update_colorbar(self, data):
+        self.scene.clear()
+        if data.size == 0:
+            return
+
+        fig, ax = plt.subplots(figsize=(1, 5))
+        norm = plt.Normalize(vmin=data.min(), vmax=data.max())
+        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='gray'), cax=ax)
+
+        canvas = FigureCanvas(fig)
+        canvas.draw()
+        pixmap = canvas.grab()
+        self.colorbar_item = self.scene.addPixmap(pixmap)
 
 class LogMonitorThread(QThread):
     update_log = pyqtSignal(str)
@@ -58,6 +90,22 @@ class ImageViewer(QGraphicsView):
         self.viewData = None  # 2D data that the image viewer is currently being set to show
         self.label = label
 
+        self.colorbar = ColorBar()
+        self.colorbar.setFixedWidth(25)  # Set a fixed width for the color bar
+        self.colorbar.setFixedHeight(self.height())  # Match height with the viewer
+
+        # Layout to include image and color bar
+        #Not sure if I should put the part below in Gui.py or here, like most of the add widget functions have been in gui.py
+
+        self.layout = QBoxLayout()
+        self.layout.addWidget(self)
+        self.layout.addWidget(self.colorbar)
+        self.setLayout(self.layout)
+
+        # def update_colorbar(viewer, data):
+        #     viewer.viewData = data
+        #     viewer.colorbar.update_colorbar(data)
+
         # TODO issue #7 add color bar
 
     def set_pixmap(self, pixmap):
@@ -66,6 +114,9 @@ class ImageViewer(QGraphicsView):
         else:
             self.pixmap_item.setPixmap(pixmap)
         self.pixmap = pixmap.toImage()
+
+        if self.viewData is not None:
+            self.colorbar.update_colorbar(self.viewData)
 
     def mouseMoveEvent(self, event):
         if self.pixmap_item is not None and self.label is not None and self.viewData is not None:
