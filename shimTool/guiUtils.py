@@ -111,7 +111,7 @@ def addLabeledSlider(layout: QBoxLayout, labelStr: str, granularity: int, orient
     layout.addLayout(labelEntryLayout)
     return slider
 
-def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: QValidator, updateFunc):
+def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, updateFunc):
     """
     Add a slider and entry to the layout with the given label
     default with value 0
@@ -126,7 +126,7 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, entryvalidator: 
 
     entry = QLineEdit()
     entry.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
-    entry.setValidator(entryvalidator)
+    entry.setValidator(QIntValidator(0,0))
     entry.setText(str(0))
 
     slider.valueChanged.connect(partial(updateSlider, entry, updateFunc))
