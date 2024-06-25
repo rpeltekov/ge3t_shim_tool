@@ -198,10 +198,12 @@ class Gui(QMainWindow):
 
         # setup image scene and view
         self.roiViewLabel = QLabel()
-        self.roiView = ImageViewer(self, self.roiViewLabel)
+        newLayout = QHBoxLayout()
+        self.roiView = ImageViewer(self, self.roiViewLabel, layout=newLayout)
         self.roiView.setFixedSize(512, 512)  # Set a fixed size for the view
         self.roiView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        imageLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
+        imageLayout.addLayout(newLayout)
+        newLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
         imageLayout.addWidget(self.roiViewLabel)
         self.views += [self.roiView]
 

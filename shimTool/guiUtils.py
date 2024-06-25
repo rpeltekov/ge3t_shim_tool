@@ -48,7 +48,7 @@ class ColorBar(QGraphicsView):
             return
 
         fig, ax = plt.subplots(figsize=(1, 5))
-        norm = plt.Normalize(vmin=data.min(), vmax=data.max())
+        norm = plt.Normalize(vmin=np.nanmin(data), vmax=np.nanmax(data))
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='gray'), cax=ax)
 
         canvas = FigureCanvas(fig)
@@ -81,7 +81,7 @@ class LogMonitorThread(QThread):
 
 
 class ImageViewer(QGraphicsView):
-    def __init__(self, parent=None, label=None):
+    def __init__(self, parent=None, label=None, layout=None):
         super(ImageViewer, self).__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
@@ -89,24 +89,22 @@ class ImageViewer(QGraphicsView):
         self.qImage: QImage = None
         self.viewData = None  # 2D data that the image viewer is currently being set to show
         self.label = label
-
-        self.colorbar = ColorBar()
-        self.colorbar.setFixedWidth(25)  # Set a fixed width for the color bar
-        self.colorbar.setFixedHeight(self.height())  # Match height with the viewer
+        if layout is not None:
+            self.colorbar = ColorBar()
+            self.colorbar.setFixedWidth(100)  # Set a fixed width for the color bar
+            self.colorbar.setFixedHeight(600)  # Match height with the viewer
 
         # Layout to include image and color bar
         #Not sure if I should put the part below in Gui.py or here, like most of the add widget functions have been in gui.py
 
-        self.layout = QBoxLayout()
-        self.layout.addWidget(self)
-        self.layout.addWidget(self.colorbar)
-        self.setLayout(self.layout)
+            layout.addWidget(self.colorbar)
 
         # def update_colorbar(viewer, data):
         #     viewer.viewData = data
         #     viewer.colorbar.update_colorbar(data)
 
         # TODO issue #7 add color bar
+        #np.nanmax and nanmin, set black to minimum and white to maximum
 
     def set_pixmap(self, pixmap):
         if self.pixmap_item is None:
@@ -115,7 +113,7 @@ class ImageViewer(QGraphicsView):
             self.pixmap_item.setPixmap(pixmap)
         self.pixmap = pixmap.toImage()
 
-        if self.viewData is not None:
+        if pixmap is not None:
             self.colorbar.update_colorbar(self.viewData)
 
     def mouseMoveEvent(self, event):
