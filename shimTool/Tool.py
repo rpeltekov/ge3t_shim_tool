@@ -122,7 +122,7 @@ class Tool():
     # ----------- Shim Tool Data/State Collection Functions ----------- #
 
     def transferScanData(self):
-        self.log(f"initiating transfer using rsync.")
+        self.log(f"Initiating transfer using rsync.")
         if self.exsiInstance.examNumber is None:
             self.log("Error: No exam number found in the exsi client instance.")
             return
@@ -226,7 +226,7 @@ class Tool():
     def resetPrincipleSols(self):
         self.principleSols = np.array([0.0 for _ in range(4+self.shimInstance.numLoops)], dtype=np.float64)
         if self.exsiInstance.ogCenterFrequency is not None:
-            self.principleSols[0] = int(self.exsiInstance.ogCenterFrequency)
+            self.principleSols[0] = self.exsiInstance.ogCenterFrequency
         if self.exsiInstance.ogLinearGradients is not None:
             self.principleSols[1:4] = self.exsiInstance.ogLinearGradients
     
@@ -244,9 +244,11 @@ class Tool():
         This will be used as a new background, and all of the "shimmed" scans done till now will be deleted.
         The solution will also be saved as a "principle solution" as if a prescan was done and it landed at these solved values
         """
-        self.principleSols = self.principleSols + self.solutionValuesToApply
+        if self.solutionValuesToApply is not None and sliceIdx is not None:
+            self.principleSols = self.principleSols + self.solutionValuesToApply[sliceIdx]
         self.backgroundB0Map = self.shimmedB0Map
         self.resetShimSols()
+        self.recomputeCurrentsAndView()
 
     def computeBackgroundB0map(self):
         # assumes that you have just gotten background by queueBasisPairScan
@@ -376,14 +378,11 @@ class Tool():
                     self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.loopCalCurrent
 
     # ----------- SHIM Sub Operations and macro function helpers ----------- #
-    def getPrincipleOffset(self, solutionIdx=0):
-        return self.principleSols[solutionIdx]
 
     def setCenterFrequency(self, deltaCF=0):
         """Offset the center frequency of the scanner by deltaCF"""
-        principleCFOffset = self.getPrincipleOffset(0)
-        newCF = int(round(principleCFOffset + deltaCF))
-        self.log(f"DEBUG: Setting center frequency from {principleCFOffset} to {newCF}")
+        newCF = int(round(self.principleSols[0] + deltaCF))
+        self.log(f"DEBUG: Setting center frequency from {self.principleSols[0]} to {newCF}")
         self.exsiInstance.sendSetCenterFrequency(newCF)
     
     def setLinGradients(self, linGrad=[0.0,0.0,0.0]):
@@ -392,7 +391,7 @@ class Tool():
         if type(linGrad) == list:
             linGrad = np.array(linGrad, dtype=np.float64)
 
-        linGrad += np.array([self.getPrincipleOffset(i) for i in range(1,4)], dtype=np.float64)
+        linGrad += self.principleSols[1:4]
         
         linGrad = np.round(linGrad).astype(int)
         self.exsiInstance.sendSetShimValues(*linGrad)
@@ -400,7 +399,7 @@ class Tool():
     def sendSyncedLoopSolution(self, channel: int, sliceIdx: int=None, ZeroOthers=False, calibration=False):
         """Send a shim loop set current command, but via the ExSI client 
         to ensure that the commands are synced with other exsi commands."""
-        principleOffset = self.getPrincipleOffset(channel)
+        principleOffset = self.principleSols[channel]
         solutionToApply = self.solutionValuesToApply[sliceIdx][channel+4]
         if calibration:
             solutionToApply = self.loopCalCurrent
@@ -596,18 +595,11 @@ class Tool():
         self.exsiInstance.images_ready_event.clear()
         if self.countScansCompleted(2):
             self.transferScanData()
-            self.log("DEBUG: just finished all the background scans")
-            if self.overwriteBackground:
-                # this scan is replacing the background
-                self.computeBackgroundB0map()
 
-                # resize principle sols correctly now if we are doing Slice-Wise shimming and it hasn't been updated yet
-                if len(self.principleSols) == 1 and self.shimModes[self.shimMode] == "Slice-Wise":
-                    self.resetPrincipleSols()
-                self.overwriteBackground = False
-            else:
-                # this scan is replacing the shimmed b0map
+            if self.backgroundB0Map is not None:
                 self.computeShimmedB0Map(sliceIdx)
+            else:
+                self.computeBackgroundB0map()
             
             # should set the principle solutions to the current center frequency and linear gradients
             if obtainPrinciples:

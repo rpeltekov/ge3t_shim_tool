@@ -131,8 +131,9 @@ class Gui(QMainWindow):
         self.basisTab.setLayout(basisLayout)
 
         # add the tabs to the main window
-        self.centralTabWidget.addTab(self.shimmingTab, "SHIM Control [Not Connected]")
+        # NOTE: if you change the order of the tabs, will need to adjust the onTabSwitch function
         self.centralTabWidget.addTab(self.exsiTab, "EXSI Control [Not Connected]")
+        self.centralTabWidget.addTab(self.shimmingTab, "SHIM Control [Not Connected]")
         self.centralTabWidget.addTab(self.basisTab, "Basis/Performance Visualization")
 
         # Connect the log monitor
@@ -454,7 +455,7 @@ class Gui(QMainWindow):
         settingsButtons = QVBoxLayout()
         selectHLayout.addLayout(settingsButtons)
 
-        self.doOverwriteBackgroundButton = addButtonConnectedToFunction(settingsButtons, "Overwrite Background?", self.toggleOverwriteBackground)
+        self.doOverwriteBackgroundButton = addButtonConnectedToFunction(settingsButtons, "Overwrite Background?", self.overwriteBackground)
         self.doOverwriteBackgroundButton.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         self.doOverwriteBackgroundButton.setEnabled(False) # this should become checkable when we have the first "actual shimmed background" completed
 
@@ -628,8 +629,8 @@ class Gui(QMainWindow):
     def toggleAutoPrescan(self, state):
         self.shimTool.autoPrescanDone = not (state == 2) # set it to not done so it gets set next time
 
-    def toggleOverwriteBackground(self):
-        self.shimTool.overwriteBackground()
+    def overwriteBackground(self):
+        self.shimTool.overwriteBackground(self.getShimSliceIndex())
         self.updateShimImageAndStats()
     
     def toggleShimStyleRadio(self, id):
@@ -692,7 +693,7 @@ class Gui(QMainWindow):
         """
         if not self.shimTool.ROI or not self.views[0].qImage:
             raise GuiError("ROI object or qImage not already initialized and trying to visualize ROI")
-        if not self.shimTool.ROI.enabled or self.roiVizButtonGroup.checkedId() == 0 or not self.shimTool.obtainedBackground()():
+        if not self.shimTool.ROI.enabled or self.roiVizButtonGroup.checkedId() == 0 or not self.shimTool.obtainedBackground():
             return # dont do anything because either the toggle is not enabled,
 
         # TODO: add support for other ROI shapes and selection here
@@ -831,7 +832,7 @@ class Gui(QMainWindow):
         return True
     
     def updateShimStats(self):
-        """Update the shim statistics text boxes and tick boxes."""
+        """Update the shim statistics text boxes"""
         # update the checkbox configurations after the latest scan
         if self.shimTool.obtainedBackground():
             self.doAutoPrescanMarker.setEnabled(True)
@@ -859,11 +860,8 @@ class Gui(QMainWindow):
 
         # if original gradients / original center frequency available 
         shimtxt = "Principle Sols: "
-        if self.shimTool.exsiInstance.ogCenterFrequency is not None:
-            shimtxt += f"OG CF = {int(self.shimTool.getPrincipleOffset(0))} Hz | "
-        if self.shimTool.exsiInstance.ogLinearGradients is not None:
-            lingrad = np.array([self.shimTool.getPrincipleOffset(i) for i in range(1, 4)])
-            shimtxt += f"Default lin gradient shims = {lingrad}"
+        shimtxt += f"OG CF = {self.shimTool.principleSols[0].astype(int)} Hz | "
+        shimtxt += f"Default lin gradient shims = {self.shimTool.principleSols[1:4].astype(int)}"
         self.doShimProcedureLabel.setText(f"SHIM OPERATIONS; " + shimtxt)
 
         # if currents are available
