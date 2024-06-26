@@ -12,12 +12,16 @@ Custom Conformal Shimming Calibration and Computation Tool for GE3T MRI Scanner
 $ cd <path/to/shimTool>
 $ pip install -r requirements.txt
 ```
-2. Fill in the empty lines in `configs.json`. These will be dependent on personal preferences and scanner setup.
-    The passwords / host ids are generally common for the GE Nspire
+2. Install / setup the pre-commit hooks
+    ```bash
+    $ pre-commit install
+    ```
+    Now when you commit, the pre-commit hooks will run and lint your code before you push. If you want to run the hooks manually, refer to https://pre-commit.com/#install or use `pre-commit run --all-files`
+3. There is provided a `configsTemplate.json`. Copy this file with the name `configs.json`, and adjust the contents to be dependent on personal preferences and scanner setup. The passwords / host ids are generally common for the GE Nspire
 
-3. Launch the tool
+4. Launch the tool. Use `--no-gui` to launch the tool in a python CLI or use `--quiet` to silence most of the logging and output.
 ```bash
-$ python shimTool.py
+$ python main.py [--no-gui] [--quiet]
 ```
 
 ## Using just the ExSI Client
