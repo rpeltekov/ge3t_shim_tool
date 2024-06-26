@@ -478,7 +478,7 @@ class Gui(QMainWindow):
         self.currentsDisplay = QTextEdit()
         line_height = QFontMetrics(self.currentsDisplay.font()).lineSpacing()
         height = line_height * 2.5
-        self.currentsDisplay.setFixedHeight(height)
+        self.currentsDisplay.setFixedHeight(int(height))
         self.currentsDisplay.setReadOnly(True)
         solutionAndSetCurrentLayout.addWidget(self.currentsDisplay)
 
