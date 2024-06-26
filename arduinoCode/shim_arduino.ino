@@ -1,4 +1,4 @@
-// Feb. 2020:" This version of code uses new fiber optic board with different output channels connected to the four amplifier boards.  BoardMap variable has been updated.  
+// Feb. 2020:" This version of code uses new fiber optic board with different output channels connected to the four amplifier boards.  BoardMap variable has been updated.
 
 #include "hardware.h"
 #include "util.h"
@@ -72,7 +72,7 @@ void setDACVal() {
         }
 
 
-        
+
       }
       long timeytmp = millis();
     ////  Serial.println(timeytmp-timey);
@@ -97,7 +97,7 @@ void setup() {
   read_in_flight = false;
   Serial.begin(115200);
 
-  //SETUP board and function select 
+  //SETUP board and function select
   initIO();
   selectNone();
   spiInit();
@@ -132,7 +132,7 @@ void setup() {
 
   delay(500);
    // attachInterrupt(interruptPin, setDACVal, FALLING);  // <===== Uncomment this line to enable TRIGGERING
-       
+
   //    attachInterrupt(4, setDACVal, RISING);
   Serial.println("I'm up");
   //  selectBoard(4);
@@ -217,7 +217,7 @@ void loop() {
             }
             break;
           case 'T':
-            setDACVal(); // advance to next row of shim currents 
+            setDACVal(); // advance to next row of shim currents
             break;
           case 'I':   // display current on each channel from ADC.  Only reads over the range -1.2A to 1.2A
             print_all();

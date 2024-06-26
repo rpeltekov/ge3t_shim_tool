@@ -6,3 +6,5 @@ pydicom==2.4.4
 PyQt6==6.7.0
 PyQt6_sip==13.6.0
 pyserial==3.5
+scikit-image
+pre-commit

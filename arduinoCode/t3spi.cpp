@@ -89,7 +89,7 @@ if (SPIx == &KINETISK_SPI0) {
 	CORE_PIN32_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2);	//Set Pin13 Output & SCK
 	CORE_PIN0_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2); //Set Pin11 Output & MOSI
 	CORE_PIN1_CONFIG = PORT_PCR_MUX(2);					//Set Pin12 Input & MISO
-	CORE_PIN31_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2);	
+	CORE_PIN31_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2);
 }
 }
 
@@ -155,7 +155,7 @@ if (SPIx == &KINETISK_SPI0) {
 	CORE_PIN32_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2);	//Set Pin13 Output & SCK
 	CORE_PIN0_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(2); //Set Pin11 Output & MOSI
 	CORE_PIN1_CONFIG = PORT_PCR_MUX(2);					//Set Pin12 Input & MISO
-	CORE_PIN31_CONFIG = PORT_PCR_MUX(2);	
+	CORE_PIN31_CONFIG = PORT_PCR_MUX(2);
 }
 
 
@@ -251,10 +251,10 @@ void T3SPI::end() {
 // 	for (unsigned int mask = 0x80000000; mask; mask >>= 1) {
 // 		Serial.print(mask&SPIx->MCR?'1':'0');}
 // 	Serial.println();
-	
+
 // 	if(0x80000000 & SPIx->MCR){
 // 		if (ctar==0){
-// 			Serial.print("SPIO_CTAR0:      ");		
+// 			Serial.print("SPIO_CTAR0:      ");
 // 			CTAR = SPIx->CTAR0;}
 // 		if (ctar==1){
 // 			Serial.print("SPIO_CTAR1:      ");
@@ -265,7 +265,7 @@ void T3SPI::end() {
 
 // 	for (unsigned int mask = 0x80000000; mask; mask >>= 1) {
 // 		Serial.print(mask&CTAR?'1':'0');}
-			
+
 // 	Serial.println();
 // 	Serial.print("SPIx->SR:         ");
 // 	for (unsigned int mask = 0x80000000; mask; mask >>= 1) {
@@ -295,7 +295,7 @@ void T3SPI::end() {
 // }
 
 //TRANSMIT PACKET OF 8 BIT DATA
-void T3SPI::tx8(volatile uint8_t *dataOUT,   int length, bool CTARn, uint8_t PCS){ 
+void T3SPI::tx8(volatile uint8_t *dataOUT,   int length, bool CTARn, uint8_t PCS){
 	ctar=CTARn;
 	for (int i=0; i < length; i++){
 		SPI_WRITE_8(dataOUT[i], CTARn, PCS, SPIx);
@@ -304,7 +304,7 @@ void T3SPI::tx8(volatile uint8_t *dataOUT,   int length, bool CTARn, uint8_t PCS
 }
 
 //TRANSMIT PACKET OF 16 BIT DATA
-void T3SPI::tx16(volatile uint16_t *dataOUT, int length, bool CTARn, uint8_t PCS){ 
+void T3SPI::tx16(volatile uint16_t *dataOUT, int length, bool CTARn, uint8_t PCS){
 	//ctar=CTARn;
 	for (int i=0; i < length; i++){
 		SPI_WRITE_16(dataOUT[i], CTARn, PCS, SPIx);
@@ -313,7 +313,7 @@ void T3SPI::tx16(volatile uint16_t *dataOUT, int length, bool CTARn, uint8_t PCS
 }
 
 //TRANSMIT & RECEIVE PACKET OF 8 BIT DATA
-void T3SPI::txrx8(volatile uint8_t *dataOUT, volatile uint8_t *dataIN, int length, bool CTARn, uint8_t PCS){ 
+void T3SPI::txrx8(volatile uint8_t *dataOUT, volatile uint8_t *dataIN, int length, bool CTARn, uint8_t PCS){
 	ctar=CTARn;
 	for (int i=0; i < length; i++){
 		SPIx->MCR |= SPI_MCR_CLR_RXF;
@@ -326,7 +326,7 @@ void T3SPI::txrx8(volatile uint8_t *dataOUT, volatile uint8_t *dataIN, int lengt
 }
 
 //TRANSMIT & RECEIVE PACKET OF 16 BIT DATA
-void T3SPI::txrx16(volatile uint16_t *dataOUT, volatile uint16_t *dataIN, int length, bool CTARn, uint8_t PCS){ 
+void T3SPI::txrx16(volatile uint16_t *dataOUT, volatile uint16_t *dataIN, int length, bool CTARn, uint8_t PCS){
 	ctar=CTARn;
 	for (int i=0; i < length; i++){
 		SPIx->MCR |= SPI_MCR_CLR_RXF;
@@ -362,7 +362,7 @@ void T3SPI::rxtx8(volatile uint8_t *dataIN, volatile uint8_t *dataOUT, int lengt
 	if (dataPointer == length){
 		dataPointer=0;
 		packetCT++;}
-	SPIx->PUSHR = dataOUT[dataPointer];  
+	SPIx->PUSHR = dataOUT[dataPointer];
 	SPIx->SR |= SPI_SR_RFDF;
 }
 
@@ -372,6 +372,6 @@ void T3SPI::rxtx16(volatile uint16_t *dataIN, volatile uint16_t *dataOUT, int le
 	if (dataPointer == length){
 		dataPointer=0;
 		packetCT++;}
-  SPIx->PUSHR = dataOUT[dataPointer];  
+  SPIx->PUSHR = dataOUT[dataPointer];
   SPIx->SR |= SPI_SR_RFDF;
 }

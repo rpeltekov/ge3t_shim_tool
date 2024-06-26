@@ -44,7 +44,7 @@ const bool bncOut = true;
 LTC2656_ADDRESS channelMap[] = {DAC_E, DAC_F, DAC_G, DAC_H, DAC_A, DAC_B, DAC_C, DAC_D};
 uint8_t channelMap_ADC[] = {0, 4, 1, 5, 2, 6, 3, 7};
 const int boardMap[NUM_B] = {2};//{3,4,5,6};//{3,2,1,0};   % new board map feb 2020,  6-->0,  5-->1,  4-->2,  3-->3
-//const int boardMap[NUM_B] = {3};//{3,4,5,6};   
+//const int boardMap[NUM_B] = {3};//{3,4,5,6};
 
 
 float zeroPoint[NUM_B][NUM_C];
@@ -92,7 +92,7 @@ const int boardSelect1 = 17;
 const int boardSelect0 = 18;
 const int interruptPin = 6;
 const int bncPin = 4;
-const int CS_BB = 30; 
+const int CS_BB = 30;
 
 void initIO() {
   pinMode(selectPin0, OUTPUT);
@@ -192,7 +192,7 @@ uint16_t LTC1863ReadSlow(uint8_t address) {
   SPI_SLAVE->packetCT = 0;
   SPI_SLAVE->dataPointer = 0;
   selectNone(); //toggle CS line to initialize the conversion
-  
+
 //  return (~data_rx[1]&0xFFFF)>>4; // 74HCT244
   return (data_rx[1]&0xFFFF)>>4; // 74HCT240
 }

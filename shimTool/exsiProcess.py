@@ -1,22 +1,24 @@
 """
-so this nearly works, it just does not pipe the output of the exsi client to the parent process properly. 
+so this nearly works, it just does not pipe the output of the exsi client to the parent process properly.
 however, it does look like it is successful in letting you call the exsi client from the parent process and run tasks.
 """
 
 
-import logging
-from shimTool.exsi_client import exsi
-from shimTool.utils import load_config
 import json
+import logging
 import multiprocessing
-import threading
 import os
 import sys
+import threading
 import time
 from queue import Empty  # Correct import for Empty exception
 
+from shimTool.exsi_client import exsi
+from shimTool.utils import load_config
+
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
+
 
 def start_exsi_client():
     request_queue = multiprocessing.Queue()
@@ -27,13 +29,17 @@ def start_exsi_client():
     config = {}
     currentPath = os.path.dirname(os.path.realpath(__file__))
     parentPath = os.path.dirname(currentPath)
-    configPath = os.path.join(parentPath, 'config.json')
+    configPath = os.path.join(parentPath, "config.json")
     config = load_config(configPath)
 
-    process = multiprocessing.Process(target=run_exsi_client, args=(config, request_queue, response_queue, child_pipe, stop_event))
+    process = multiprocessing.Process(
+        target=run_exsi_client,
+        args=(config, request_queue, response_queue, child_pipe, stop_event),
+    )
     process.start()
 
     return process, request_queue, response_queue, parent_pipe, stop_event
+
 
 def run_exsi_client(config, request_queue, response_queue, pipe, stop_event):
     logging.debug("Starting exsi_client process")
@@ -72,6 +78,7 @@ def run_exsi_client(config, request_queue, response_queue, pipe, stop_event):
         pipe.close()
         logging.debug("Pipe closed")
 
+
 def call_method(request_queue, response_queue, method, *args, **kwargs):
     request_queue.put((method, args, kwargs))
     result = response_queue.get()
@@ -79,20 +86,28 @@ def call_method(request_queue, response_queue, method, *args, **kwargs):
         raise result
     return result
 
+
 def read_stdout(pipe):
     try:
         while True:
             output = pipe.recv()
-            if output == '':
+            if output == "":
                 break
             print(output, end="")
     except EOFError:
         logging.debug("EOFError in read_stdout")
         pass
 
+
 # Example use of this file
 if __name__ == "__main__":
-    process, request_queue, response_queue, parent_pipe, stop_event = start_exsi_client()
+    (
+        process,
+        request_queue,
+        response_queue,
+        parent_pipe,
+        stop_event,
+    ) = start_exsi_client()
 
     time.sleep(5)
 
@@ -101,7 +116,7 @@ if __name__ == "__main__":
     stdout_thread.start()
 
     try:
-        result = call_method(request_queue, response_queue, 'sendLoadProtocol', 'BPT_EXSI')
+        result = call_method(request_queue, response_queue, "sendLoadProtocol", "BPT_EXSI")
         print("Result:", result)
 
     finally:

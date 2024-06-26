@@ -1,16 +1,18 @@
-import serial
-import threading
 import queue
 import re
+import threading
 from datetime import datetime
 
+import serial
+
 from shimTool.utils import launchInThread
+
 
 class shim:
     def __init__(self, config, outputFile, defaultTimeout=1, debugging=False):
         self.debugging = debugging
-        self.port = config['shimPort']
-        self.baudRate = config['shimBaudRate']
+        self.port = config["shimPort"]
+        self.baudRate = config["shimBaudRate"]
         self.outputFile = outputFile
         self.defaultTimeout = defaultTimeout
 
@@ -24,11 +26,11 @@ class shim:
 
         # TODO: add a way to set the num loops and update the arduino code to accept those changes
         self.numLoops = 0
-        self.loopCurrents = [0 for _ in range(self.numLoops)] 
+        self.loopCurrents = [0 for _ in range(self.numLoops)]
         self.calibrated = False
 
         # this gets set in the Exsi Gui
-        self.clearExsiQueue = lambda : None
+        self.clearExsiQueue = lambda: None
 
         # Clear the Log
         with open(self.outputFile, "w"):
@@ -51,8 +53,9 @@ class shim:
                 self.readyEvent.wait()
             self.connectedEvent.set()
             print(f"INFO SHIM CLIENT: Connection Created successfully")
+
         t = threading.Thread(target=waitForConnection)
-        t.daemon = True 
+        t.daemon = True
         t.start()
 
     def openPort(self):
@@ -77,7 +80,7 @@ class shim:
             while self.running:
                 try:
                     # Wait for up to 1 second
-                    cmd = self.commandQueue.get(timeout=1) 
+                    cmd = self.commandQueue.get(timeout=1)
                     self._sendCommand(cmd)
                     # the arduino should be able to send a response immediately
                     ready = self.readyEvent.wait(1)
@@ -99,15 +102,15 @@ class shim:
         try:
             while self.running:
                 if self.ser.inWaiting() > 0:
-                    msg = self.ser.readline().decode('utf-8').rstrip()
+                    msg = self.ser.readline().decode("utf-8").rstrip()
                     if self.debugging:
                         print(f"Debug SHIM CLIENT: recieved msg: {msg}")
-                    
+
                     # Append the message that was recieved to the log
-                    with open(self.outputFile, 'a') as file:
+                    with open(self.outputFile, "a") as file:
                         current_time = datetime.now()
                         # Format the current time as a string (e.g., HH:MM:SS)
-                        formatted_time = current_time.strftime('%H:%M:%S')
+                        formatted_time = current_time.strftime("%H:%M:%S")
                         file.write(f"{formatted_time} Received: " + msg + "\n")
 
                     ready, fail = self.processLine(msg)
@@ -121,7 +124,7 @@ class shim:
                         notify = "Command Failed: "
                         notify += self.lastCommand
                         notify += "\nClearing Command Queue\n\n"
-                        with open(self.outputFile, 'a') as file:
+                        with open(self.outputFile, "a") as file:
                             file.write(notify)
                         self.clearCommandQueue()  # Clear the queue on failure
                         self.clearExsiQueue()
@@ -154,14 +157,12 @@ class shim:
                 board = int(match.group(1))
                 channel = int(match.group(2))
                 current = float(match.group(3))
-                
+
                 expected = re.search(sent_pattern, self.lastCommand)
                 expBoard = int(expected.group(1))
                 expChannel = int(expected.group(2))
                 expCurrent = float(expected.group(3))
-                if (expBoard != board) or \
-                    (expChannel != channel) or \
-                    (f"{current:.2f}" != f"{expCurrent:.2f}"):
+                if (expBoard != board) or (expChannel != channel) or (f"{current:.2f}" != f"{expCurrent:.2f}"):
                     fail = True
                     print(f"Debug: Failed Command Mismatch in current setting:")
                     print(f"\tExpected:\t{expBoard}, {expChannel}, {expCurrent:.2f}")
@@ -169,7 +170,7 @@ class shim:
                 else:
                     # TODO(rob): maybe add some error bounds checking for indexing this guy
                     # maybe some helper method or smth. get and set methods
-                    self.loopCurrents[board*8+channel] = current
+                    self.loopCurrents[board * 8 + channel] = current
         elif self.lastCommand.startswith("Z"):
             ready = "Done Zeroing" in msg
             # TODO(rob): doesnt detect failure. think about it... maybe not it is so trivial
@@ -205,9 +206,9 @@ class shim:
                 self.commandQueue.task_done()
             except queue.Empty:
                 break
-        with open(self.outputFile, 'a') as file:
+        with open(self.outputFile, "a") as file:
             file.write("\n CMD Queue CLEARED due to failure.")
-        
+
     def stop(self):
         # print out the command queue if it was not empty
         if not self.commandQueue.empty():
@@ -220,7 +221,7 @@ class shim:
         if self.ser:
             self.ser.close()
             print(f"INFO SHIM CLIENT: Closed connection to arduino. bye.")
-    
+
     def __del__(self):
         self.stop()
 
@@ -228,14 +229,16 @@ class shim:
 
     def requireShimDriverConnected(func):
         """Decorator to check if the EXSI client is connected before running a function."""
+
         def wrapper(self, *args, **kwargs):
             # Check the status of the event
             if not self.connectedEvent.is_set() and not self.debugging:
                 # Show a message to the user, reconnect shim client.
                 raise ShimDriverError("SHIM Client Not Connected")
             return func(self)
+
         return wrapper
- 
+
     @launchInThread
     @requireShimDriverConnected
     def shimCalibrate(self):
@@ -251,7 +254,7 @@ class shim:
     def shimGetCurrent(self):
         # Could be used to double check that the channels calibrated
         self.send("I")
-    
+
     @launchInThread
     @requireShimDriverConnected
     def shimSetCurrentManual(self, channel, current, board):
@@ -264,10 +267,13 @@ class shim:
         """helper function to set the current for a specific channel on a specific board."""
         self.send(f"X {channel // 8} {channel % 8} {current}")
 
+
 class ShimDriverError(Exception):
     """Exception raised for errors in the Shim Driver."""
+
     pass
-    
+
+
 if __name__ == "__main__":
     arduino_port = "/dev/ttyACM1"  # Adjust to your Arduino's serial port
     # handle_serial(arduino_port)

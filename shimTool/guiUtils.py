@@ -2,14 +2,27 @@
 File for all the Utility functions for the GUI
 """
 
-import time
-from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox, QBoxLayout
-from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal, Qt
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
-from PyQt6.QtGui import QValidator, QIntValidator, QImage
-from functools import partial
-import numpy as np
 import inspect
+import time
+from functools import partial
+
+import numpy as np
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QImage, QIntValidator, QValidator
+from PyQt6.QtWidgets import (
+    QBoxLayout,
+    QCheckBox,
+    QGraphicsScene,
+    QGraphicsView,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSlider,
+)
+
 
 class LogMonitorThread(QThread):
     update_log = pyqtSignal(str)
@@ -21,7 +34,7 @@ class LogMonitorThread(QThread):
 
     def run(self):
         self.running = True
-        with open(self.filename, 'r') as file:
+        with open(self.filename, "r") as file:
             # Move to the end of the file
             file.seek(0, 2)
             while self.running:
@@ -34,6 +47,7 @@ class LogMonitorThread(QThread):
     def stop(self):
         self.running = False
 
+
 class ImageViewer(QGraphicsView):
     def __init__(self, parent=None, label=None):
         super(ImageViewer, self).__init__(parent)
@@ -41,7 +55,7 @@ class ImageViewer(QGraphicsView):
         self.setScene(self.scene)
         self.pixmap_item = None
         self.qImage: QImage = None
-        self.viewData = None # 2D data that the image viewer is currently being set to show
+        self.viewData = None  # 2D data that the image viewer is currently being set to show
         self.label = label
 
         # TODO issue #7 add color bar
@@ -65,6 +79,7 @@ class ImageViewer(QGraphicsView):
             else:
                 self.label.clear()
 
+
 def createMessageBox(title, text, informativeText):
     msg = QMessageBox()
     msg.setIcon(QMessageBox.Icon.Warning)
@@ -74,20 +89,26 @@ def createMessageBox(title, text, informativeText):
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
     msg.exec()
 
+
 class Trigger(QObject):
-    """ Class to trigger a signal when a function is finished. """
+    """Class to trigger a signal when a function is finished."""
+
     finished = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.success = False
 
+
 # ------------ gui objects ------------
+
 
 def addButtonConnectedToFunction(layout: QBoxLayout, buttonName: str, function):
     button = QPushButton(buttonName)
     button.clicked.connect(function)
     layout.addWidget(button)
     return button
+
 
 def addEntryWithLabel(layout: QBoxLayout, labelStr: str, entryvalidator: QValidator):
     label = QLabel(labelStr)
@@ -99,7 +120,13 @@ def addEntryWithLabel(layout: QBoxLayout, labelStr: str, entryvalidator: QValida
     layout.addLayout(labelEntryLayout)
     return entry
 
-def addLabeledSlider(layout: QBoxLayout, labelStr: str, granularity: int, orientation=Qt.Orientation.Horizontal):
+
+def addLabeledSlider(
+    layout: QBoxLayout,
+    labelStr: str,
+    granularity: int,
+    orientation=Qt.Orientation.Horizontal,
+):
     slider = QSlider(orientation)
     label = QLabel(labelStr)
     labelEntryLayout = QHBoxLayout()
@@ -107,9 +134,10 @@ def addLabeledSlider(layout: QBoxLayout, labelStr: str, granularity: int, orient
     labelEntryLayout.addWidget(slider)
     slider.setMinimum(1)
     slider.setMaximum(granularity)
-    slider.setValue((round(granularity)//2))
+    slider.setValue((round(granularity) // 2))
     layout.addLayout(labelEntryLayout)
     return slider
+
 
 def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, updateFunc):
     """
@@ -126,7 +154,7 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, updateFunc):
 
     entry = QLineEdit()
     entry.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
-    entry.setValidator(QIntValidator(0,0))
+    entry.setValidator(QIntValidator(0, 0))
     entry.setText(str(0))
 
     slider.valueChanged.connect(partial(updateSlider, entry, updateFunc))
@@ -139,7 +167,8 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, updateFunc):
     layout.addLayout(labelEntryLayout)
     return slider, entry
 
-def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxVal: int, defaultVal:int=None):
+
+def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxVal: int, defaultVal: int = None):
     slider.setMinimum(minVal)
     slider.setMaximum(maxVal)
     entry.setValidator(QIntValidator(minVal, maxVal))
@@ -148,6 +177,7 @@ def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxV
         entry.setText(str(defaultVal))
     else:
         entry.setText(str(slider.value()))
+
 
 def addButtonWithFuncAndMarker(layout: QBoxLayout, buttonName: str, function, markerName="Done?"):
     hlayout = QHBoxLayout()
@@ -163,7 +193,9 @@ def addButtonWithFuncAndMarker(layout: QBoxLayout, buttonName: str, function, ma
         button = addButtonConnectedToFunction(hlayout, buttonName, function)
     return button, marker
 
+
 # ------------ gui update helper functions ------------ #
+
 
 def updateEntry(entry: QLineEdit, slider: QSlider, updateFunc):
     """
@@ -187,16 +219,18 @@ def updateSlider(entry: QLineEdit, updateFunc, value: int):
         else:
             updateFunc()
 
+
 # ------------ gui ROI shapes ------------ #
-class ROIObject():
+class ROIObject:
     """
     General ROI object to hold the parameters of an ROI
     """
+
     def __init__(self) -> None:
-        self.sizes = [0,0,0]
-        self.centers = [0,0,0]
-        self.sliderSizes = [0,0,0]
-        self.sliderCenters = [0,0,0]
+        self.sizes = [0, 0, 0]
+        self.centers = [0, 0, 0]
+        self.sliderSizes = [0, 0, 0]
+        self.sliderCenters = [0, 0, 0]
 
         self.xdim = 0
         self.ydim = 0
@@ -205,7 +239,7 @@ class ROIObject():
         self.updated = False
         self.enabled = False
         self.mask = None
-    
+
     def setROILimits(self, xdim, ydim, zdim):
         self.xdim = xdim
         self.ydim = ydim
@@ -244,16 +278,19 @@ class ROIObject():
         Check if the point is in the ROI
         """
         raise NotImplementedError
-    
+
+
 class ellipsoidROI(ROIObject):
     """
     Class to hold the parameters of an ellipsoid ROI
     """
+
     def __init__(self) -> None:
         super().__init__()
-    
-    def isIMGPointInROI(self, x, y, z):
-        return ((x - self.centers[0])**2 / self.sizes[0]**2 +
-                (y - self.centers[1])**2 / self.sizes[1]**2 +
-                (z - self.centers[2])**2 / self.sizes[2]**2) <= 1
 
+    def isIMGPointInROI(self, x, y, z):
+        return (
+            (x - self.centers[0]) ** 2 / self.sizes[0] ** 2
+            + (y - self.centers[1]) ** 2 / self.sizes[1] ** 2
+            + (z - self.centers[2]) ** 2 / self.sizes[2] ** 2
+        ) <= 1

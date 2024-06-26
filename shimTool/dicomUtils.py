@@ -1,29 +1,36 @@
 import os
+from enum import Enum
+
 import numpy as np
 import pydicom
-from enum import Enum
+
 
 class Orientation(Enum):
     CORONAL = 1
     SAGITTAL = 2
     AXIAL = 3
 
+
 def listSubDirs(directory):
     # Function to list all DICOM files in a directory
     if os.path.exists(directory):
-        subdirs = [os.path.join(directory, d) for d in os.listdir(directory) if os.path.isdir(os.path.join(directory, d))]
-        subdirs.sort(key=lambda f: int(f.split('/')[-1][1:]))
+        subdirs = [
+            os.path.join(directory, d) for d in os.listdir(directory) if os.path.isdir(os.path.join(directory, d))
+        ]
+        subdirs.sort(key=lambda f: int(f.split("/")[-1][1:]))
         return subdirs
     else:
         print(f"Directory {directory} does not exist.")
         return []
 
+
 def listDicomFiles(dcmSeriesDir):
     # Function to list all DICOM files in a dcmSeriesDir
     if len(os.listdir(dcmSeriesDir)) > 0:
         dicom_files = [os.path.join(dcmSeriesDir, f) for f in os.listdir(dcmSeriesDir)]
-        dicom_files.sort(key=lambda f: int(f.split('.')[-1]))
+        dicom_files.sort(key=lambda f: int(f.split(".")[-1]))
         return dicom_files
+
 
 def get_orientation(orientation_cosines):
     x, y = orientation_cosines[:3], orientation_cosines[3:6]
@@ -45,18 +52,19 @@ def get_orientation(orientation_cosines):
     else:
         return None  # Orientation not standard or mixed
 
+
 def extractMetadata(dcm):
     try:
-        te = getattr(dcm, 'EchoTime')
+        te = getattr(dcm, "EchoTime")
         # TODO(rob): implement the series descriptor, so you can append to the top of the visualizer
-        series_desc = getattr(dcm, 'SeriesDescription')
+        series_desc = getattr(dcm, "SeriesDescription")
 
         # add orientation
         # if 'Image Orientation (Patient)' in dcm:
         #     orientation_cosines = dcm['Image Orientation (Patient)'].value
         #     orientation = get_orientation(orientation_cosines)
         # else:
-        orientation = None 
+        orientation = None
 
         # TODO issue #1: use this to see how to extract orientation metadata
         # for elem in dcm.iterall():
@@ -67,7 +75,8 @@ def extractMetadata(dcm):
         print(f"Error extracting metadata: {e}")
         return None, None
 
-def extractComplexImageData(dcmSeriesPath, threshFactor=.5):
+
+def extractComplexImageData(dcmSeriesPath, threshFactor=0.5):
     # NOTE: Assumes that Mag, I, Q images are interleaved in the series!!!
     # Process a dicom directory and pulls out masked complex data
     paths = listDicomFiles(dcmSeriesPath)
@@ -79,8 +88,8 @@ def extractComplexImageData(dcmSeriesPath, threshFactor=.5):
     te = None
     for i in range(0, len(paths), 3):
         mag = pydicom.dcmread(paths[i])
-        I = pydicom.dcmread(paths[i+1])
-        Q = pydicom.dcmread(paths[i+2])
+        I = pydicom.dcmread(paths[i + 1])
+        Q = pydicom.dcmread(paths[i + 2])
         mags.append(mag.pixel_array)
         Is.append(I.pixel_array)
         Qs.append(Q.pixel_array)
@@ -89,13 +98,14 @@ def extractComplexImageData(dcmSeriesPath, threshFactor=.5):
     mags = np.stack(mags, axis=0)
     Is = np.stack(Is, axis=0)
     Qs = np.stack(Qs, axis=0)
-    phase = Is + 1j*Qs
+    phase = Is + 1j * Qs
 
     thresh = np.mean(mags) * threshFactor
     mask = mags < thresh
     phase[mask] = np.nan
 
     return phase, te, name
+
 
 def extractBasicImageData(dcmSeriesPath, stride=1, offset=0):
     # Process a dicom directory and pull out the image data from it along with te
@@ -105,9 +115,8 @@ def extractBasicImageData(dcmSeriesPath, stride=1, offset=0):
     data3d = []
     te = None
     for i in range(0, len(paths), stride):
-        data = pydicom.dcmread(paths[i+offset])
+        data = pydicom.dcmread(paths[i + offset])
         data3d.append(data.pixel_array)
         te, orientation = extractMetadata(data)
     data3d = np.stack(data3d, axis=0)
     return data3d, te, orientation
-

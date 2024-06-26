@@ -1,6 +1,6 @@
 # ge3t_conformal_shim
-Custom Conformal Shimming Calibration and Computation Tool for GE3T MRI Scanner 
-* Automated using ExSI. A tool made by GE for the GE 
+Custom Conformal Shimming Calibration and Computation Tool for GE3T MRI Scanner
+* Automated using ExSI. A tool made by GE for the GE
 * Built for use with OpenSourceImaging Shim Drivers
 * Runs on ajacent machine to scanner computer, so that you have access to latest python environment
 * GUI built using PyQT6

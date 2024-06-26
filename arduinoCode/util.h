@@ -51,8 +51,8 @@ int block_transitions[maxBlocks];
 int block_base[maxBlocks];
 bool lendian;
 
-float coefStore[256] = {    
- 
+float coefStore[256] = {
+
 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, //1.1
 0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0, //1.2
 0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0, //1.3
