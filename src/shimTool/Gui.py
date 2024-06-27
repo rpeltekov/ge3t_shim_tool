@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from shimTool.guiUtils import *
-from shimTool.Tool import Tool
+from shimTool.Tool import Tool, ShimMode
 from shimTool.utils import *
 
 
@@ -191,10 +191,8 @@ class Gui(QMainWindow):
         basicLayout.addLayout(imageLayout)
 
         # Slider for selecting slices
-        packed = addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", self.updateROIImageDisplay)
-        self.roiSliceIndexSlider, self.roiSliceIndexEntry = packed
-        self.roiSliceIndexSlider.setEnabled(False)
-        self.roiSliceIndexEntry.setEnabled(False)  # start off disabled -- no image is viewed yet!
+        self.roiSliceIndexPack = addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", self.updateROIImageDisplay)
+        disableWidgetsInList(self.roiSliceIndexPack) # start off disabled -- no image is viewed yet!
 
         # setup image scene and view
         self.roiViewLabel = QLabel()
@@ -312,6 +310,9 @@ class Gui(QMainWindow):
         self.shimVizButtonGroup.addButton(shimVizButtonShimmedBackground, 2)
         shimVizButtonLayout.addWidget(shimVizButtonShimmedBackground)
         self.shimVizButtonGroup.idClicked.connect(self.toggleShimImage)
+
+        # add the slice selection slider
+        self.shimSliceIndexPack = addLabeledSliderAndEntry(layout, "Slice Index (Int): ", self.updateShimImageAndStats)
 
         # add another graphics scene visualizer
         # Setup QGraphicsView for image display
@@ -438,10 +439,9 @@ class Gui(QMainWindow):
         boundingLayout.addWidget(self.shimScanConfigLabel)
 
         # delta TE slider and entry
-        packed = addLabeledSliderAndEntry(boundingLayout, "Delta TE (us): ", updateDeltaTE)
-        self.shimDeltaTESlider, self.shimDeltaTEEntry = packed
+        self.shimDeltaTEPack = addLabeledSliderAndEntry(boundingLayout, "Delta TE (us): ", updateDeltaTE)
         updateSliderEntryLimits(
-            *packed,
+            self.shimDeltaTEPack,
             self.shimTool.minDeltaTE,
             self.shimTool.maxDeltaTE,
             self.shimTool.deltaTE,
@@ -452,31 +452,26 @@ class Gui(QMainWindow):
         boundingLayout.addLayout(calibrationStrengthView)
 
         # for the gradient strengths
-        packed = addLabeledSliderAndEntry(calibrationStrengthView, "Gradient Cal (tick?): ", updateGradientCalStrength)
-        self.shimGradientStrengthSlider, self.shimGradientStrengthEntry = packed
+        self.shimGradientStrengthPack = addLabeledSliderAndEntry(calibrationStrengthView, "Gradient Cal (tick?): ", updateGradientCalStrength)
         updateSliderEntryLimits(
-            *packed,
+            self.shimGradientStrengthPack,
             self.shimTool.minGradientCalStrength,
             self.shimTool.maxGradientCalStrength,
             self.shimTool.gradientCalStrength,
         )
 
         # for current slider and entry
-        packed = addLabeledSliderAndEntry(calibrationStrengthView, "Loop Cal (mA): ", updateLoopCalCurrent)
-        self.shimCalCurrentSlider, self.shimCalCurrentEntry = packed
+        self.shimCalCurrentPack = addLabeledSliderAndEntry(calibrationStrengthView, "Loop Cal (mA): ", updateLoopCalCurrent)
         updateSliderEntryLimits(
-            *packed,
+            self.shimCalCurrentPack,
             self.shimTool.minCalibrationCurrent,
             self.shimTool.maxCalibrationCurrent,
             self.shimTool.loopCalCurrent,
         )
         self.slowButtons += [
-            self.shimDeltaTESlider,
-            self.shimDeltaTEEntry,
-            self.shimGradientStrengthSlider,
-            self.shimGradientStrengthEntry,
-            self.shimCalCurrentSlider,
-            self.shimCalCurrentEntry,
+            *self.shimDeltaTEPack,
+            *self.shimGradientStrengthPack,
+            *self.shimCalCurrentPack
         ]
 
     def setupShimScanUI(self, layout):
@@ -520,10 +515,10 @@ class Gui(QMainWindow):
         self.volumeSliceShimWidget.setLayout(shimTypeLayout)
         self.volumeSliceShimButtonGroup = QButtonGroup(self.volumeSliceShimWidget)
         sliceShimRadioButton = QRadioButton("Perform Slice Shim")
-        volumeShimRadioButton = QRadioButton("Perform Volume Shim")
         sliceShimRadioButton.setChecked(True)
-        self.volumeSliceShimButtonGroup.addButton(sliceShimRadioButton, 0)
-        self.volumeSliceShimButtonGroup.addButton(volumeShimRadioButton, 1)
+        volumeShimRadioButton = QRadioButton("Perform Volume Shim")
+        self.volumeSliceShimButtonGroup.addButton(sliceShimRadioButton, ShimMode.SLICE.value)
+        self.volumeSliceShimButtonGroup.addButton(volumeShimRadioButton, ShimMode.VOLUME.value)
         shimTypeLayout.addWidget(sliceShimRadioButton)
         shimTypeLayout.addWidget(volumeShimRadioButton)
         self.volumeSliceShimButtonGroup.idClicked.connect(self.toggleShimStyleRadio)
@@ -551,12 +546,6 @@ class Gui(QMainWindow):
         self.recomputeCurrentsButton.setEnabled(
             False
         )  # enables when the currents are computed i.e. basis map button is done
-
-        # add the slice selection slider
-        packed = addLabeledSliderAndEntry(configLayout, "Slice Index (Int): ", self.updateShimImageAndStats)
-        self.shimSliceIndexSlider, self.shimSliceIndexEntry = packed
-        self.shimSliceIndexSlider.setEnabled(False)
-        self.shimSliceIndexEntry.setEnabled(False)
 
         # add the Solved Currents Display and the Set Shim Button
         solutionAndSetCurrentLayout = QHBoxLayout()
@@ -631,22 +620,16 @@ class Gui(QMainWindow):
 
         # add a slider for selecting the basis function
         numbasis = self.shimTool.shimInstance.numLoops + 3
-        self.basisFunctionSlider, self.basisFunctionEntry = addLabeledSliderAndEntry(
-            leftLayout, "Basis Function Index (Int): ", self.updateBasisView
-        )
-        updateSliderEntryLimits(self.basisFunctionSlider, self.basisFunctionEntry, 0, numbasis - 1, 0)
+        self.basisFunctionPack = addLabeledSliderAndEntry(leftLayout, "Basis Index (Int): ", self.updateBasisView)
+        updateSliderEntryLimits(self.basisFunctionPack, 0, numbasis - 1, 0)
 
         # add a label and select for the slice index
-        (
-            self.basisSliceIndexSlider,
-            self.basisSliceIndexEntry,
-        ) = addLabeledSliderAndEntry(leftLayout, "Slice Index (Int): ", self.updateBasisView)
-        self.basisSliceIndexEntry.setEnabled(False)
-        self.basisSliceIndexEntry.setEnabled(False)
+        self.basisSliceIndexPack = addLabeledSliderAndEntry(leftLayout, "Slice Index (Int): ", self.updateBasisView)
+        disableWidgetsInList(self.basisSliceIndexPack)
 
     # ---------- Slider Get Functions ----------- #
     def getROISliceIndex(self):
-        return self.roiSliceIndexSlider.value()
+        return self.roiSliceIndexPack[1].value()
 
     def getROIBackgroundSelected(self):
         """get the selected roi view type. 0 for latest data, 1 for background"""
@@ -657,19 +640,21 @@ class Gui(QMainWindow):
         return self.shimVizButtonGroup.checkedId()
 
     def getShimSliceIndex(self):
-        return self.shimSliceIndexSlider.value()
+        slider = self.shimSliceIndexPack[1]
+        return slider.value()
 
     def getShimDeltaTE(self):
-        return self.shimDeltaTESlider.value()
+        slider = self.shimDeltaTEPack[1]
+        return slider.value()
 
     def getShimCalCurrent(self):
-        return self.shimCalCurrentSlider.value() / 1000  # convert to A
+        return self.shimCalCurrentPack[1].value() / 1000  # convert to A
 
     def getBasisSliceIndex(self):
-        return self.basisSliceIndexSlider.value()
+        return self.basisSliceIndexPack[1].value()
 
     def getBasisFunctionIndex(self):
-        return self.basisFunctionSlider.value()
+        return self.basisFunctionPack[1].value()
 
     # ---------- State Functions ---------- #
 
@@ -747,10 +732,7 @@ class Gui(QMainWindow):
         self.updateShimImageAndStats()
 
     def toggleShimStyleRadio(self, id):
-        self.shimTool.shimMode = id
-        if self.shimTool.obtainedBackground():
-            self.shimSliceIndexSlider.setEnabled(id == 0)
-            self.shimSliceIndexEntry.setEnabled(id == 0)
+        self.shimTool.shimMode = ShimMode.SLICE if id == ShimMode.SLICE.value else ShimMode.VOLUME
 
     def updateLogOutput(self, log, text):
         log.append(text)
@@ -837,7 +819,7 @@ class Gui(QMainWindow):
         if old != self.shimTool.ROI.sizes + self.shimTool.ROI.centers:
             self.shimTool.ROI.updated = True
 
-        sliceIdx = self.roiSliceIndexSlider.value()
+        sliceIdx = self.getROISliceIndex()
         offsetFromDepthCenter = abs(sliceIdx - self.shimTool.ROI.centers[2])
         drawingQImage = qImage.copy()
         if offsetFromDepthCenter <= self.shimTool.ROI.sizes[2]:
@@ -859,10 +841,9 @@ class Gui(QMainWindow):
             return False
 
         # there is reason to enable the slice index slider now, if it wasn't already
-        self.roiSliceIndexSlider.setEnabled(True)
-        self.roiSliceIndexEntry.setEnabled(True)
-        # the data should have already been placed into viewData
+        enableWidgetsInList(self.roiSliceIndexPack)
 
+        # the data should have already been placed into viewData
         # if background acquired, toggle the background button
         if self.shimTool.obtainedBackground():
             self.roiVizButtonGroup.buttons()[1].setEnabled(True)
@@ -875,20 +856,20 @@ class Gui(QMainWindow):
                 raise GuiError("Background scans not yet obtained.")
             # need to set the slider limits
             upperlimit = self.shimTool.viewData[0].shape[1] - 1
-            updateSliderEntryLimits(self.roiSliceIndexSlider, self.roiSliceIndexEntry, 0, upperlimit)
+            updateSliderEntryLimits(self.roiSliceIndexPack, 0, upperlimit)
             # assume that slider value automatically updated to be within bounds
             # need to set viewDataSlice to the desired slice
-            self.viewDataSlice[0] = self.shimTool.viewData[0][:, self.roiSliceIndexSlider.value(), :]
+            self.viewDataSlice[0] = self.shimTool.viewData[0][:, self.getROISliceIndex(), :]
             # set ROI limits TODO issue #1
             ydim, zdim, xdim = self.shimTool.viewData[0].shape
             self.shimTool.ROI.setROILimits(xdim, ydim, zdim)
         # if the data is latest data
         else:
             upperlimit = self.shimTool.viewData[0].shape[0] - 1
-            updateSliderEntryLimits(self.roiSliceIndexSlider, self.roiSliceIndexEntry, 0, upperlimit)
+            updateSliderEntryLimits(self.roiSliceIndexPack, 0, upperlimit)
             # assume that slider value automatically updated to be within bounds
             # need to set viewDataSlice to the desired slice
-            self.viewDataSlice[0] = self.shimTool.viewData[0][self.roiSliceIndexSlider.value()]
+            self.viewDataSlice[0] = self.shimTool.viewData[0][self.getROISliceIndex()]
         return True
 
     def updateROIImageDisplay(self):
@@ -935,13 +916,10 @@ class Gui(QMainWindow):
 
         # set the limit to the shim slice index slider
         upperlimit = self.shimTool.viewData[1][0].shape[1] - 1
-        updateSliderEntryLimits(self.shimSliceIndexSlider, self.shimSliceIndexEntry, 0, upperlimit)
-        # assume that slider value automatically updated to be within bounds
-        # there is reason to enable the slice index slider now, if it wasn't already
-        self.shimSliceIndexSlider.setEnabled(True)
-        self.shimSliceIndexEntry.setEnabled(True)
+        updateSliderEntryLimits(self.shimSliceIndexPack, 0, upperlimit)
+
         # set the viewDataSlice to the desired slice from the whole 4D data set
-        self.viewDataSlice[1] = self.shimTool.viewData[1][selectedShimView][:, self.shimSliceIndexSlider.value(), :]
+        self.viewDataSlice[1] = self.shimTool.viewData[1][selectedShimView][:, self.getShimSliceIndex(), :]
         return True
 
     def updateShimStats(self):
@@ -1023,15 +1001,14 @@ class Gui(QMainWindow):
 
         # set the limit to the basis slice index slider
         numslices = self.shimTool.viewData[2][0].shape[1] - 1
-        updateSliderEntryLimits(self.basisSliceIndexSlider, self.basisSliceIndexEntry, 0, numslices)
+        updateSliderEntryLimits(self.basisSliceIndexPack, 0, numslices)
 
         # there is reason to enable the slice index slider now, if it wasn't already
-        self.basisSliceIndexSlider.setEnabled(True)
-        self.basisSliceIndexEntry.setEnabled(True)
+        enableWidgetsInList(self.basisSliceIndexPack)
 
         # set the viewDataSlice to the desired slice from the whole 4D data set
-        self.viewDataSlice[2] = self.shimTool.viewData[2][self.basisFunctionSlider.value()][
-            :, self.basisSliceIndexSlider.value(), :
+        self.viewDataSlice[2] = self.shimTool.viewData[2][self.getBasisFunctionIndex()][
+            :, self.getBasisSliceIndex()
         ]
         return True
 

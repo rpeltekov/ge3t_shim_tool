@@ -165,10 +165,12 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, updateFunc):
     labelEntryLayout.addWidget(slider)
     labelEntryLayout.addWidget(entry)
     layout.addLayout(labelEntryLayout)
-    return slider, entry
+    return label, slider, entry
 
 
-def updateSliderEntryLimits(slider: QSlider, entry: QLineEdit, minVal: int, maxVal: int, defaultVal: int = None):
+def updateSliderEntryLimits(LabelSliderEntry: list, minVal: int, maxVal: int, defaultVal: int = None):
+    slider = LabelSliderEntry[1]
+    entry = LabelSliderEntry[2] 
     slider.setMinimum(minVal)
     slider.setMaximum(maxVal)
     entry.setValidator(QIntValidator(minVal, maxVal))
@@ -219,6 +221,21 @@ def updateSlider(entry: QLineEdit, updateFunc, value: int):
         else:
             updateFunc()
 
+def hideWidgetsInList(widgets):
+    for widget in widgets:
+        widget.hide()
+
+def showWidgetsInList(widgets):
+    for widget in widgets:
+        widget.show()
+
+def disableWidgetsInList(widgets):
+    for widget in widgets:
+        widget.setEnabled(False)
+
+def enableWidgetsInList(widgets):
+    for widget in widgets:
+        widget.setEnabled(True)
 
 # ------------ gui ROI shapes ------------ #
 class ROIObject:

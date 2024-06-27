@@ -4,6 +4,7 @@
 import os
 import pickle
 import sys
+from enum import Enum
 from datetime import datetime
 from typing import List
 
@@ -17,6 +18,10 @@ from shimTool.shim_client import shim
 from shimTool.shimCompute import *
 from shimTool.utils import *
 
+
+class ShimMode(Enum):
+    SLICE = 0
+    VOLUME = 1
 
 class Tool:
     def __init__(self, config, debugging=True):
@@ -76,8 +81,7 @@ class Tool:
         self.minCalibrationCurrent = 100  # 100 mA
         self.maxCalibrationCurrent = 2000  # 2 A
         self.loopCalCurrent = 1000  # 1 A
-        self.shimMode = 0  # 0 for Slice-Wise or 1 for Volume shimming
-        self.shimModes = {0: "Slice-Wise", 1: "Volume"}
+        self.shimMode = ShimMode.SLICE # 0 for Slice-Wise or 1 for Volume shimming
 
         # ----------- Shim Tool State ----------- #
         # Scan session attributes
@@ -740,7 +744,7 @@ class Tool:
         """Set all the shim currents to the values that were computed and saved in the solutions array, for the specified slice"""
 
         if self.obtainedSolutions():
-            if self.shimModes[self.shimMode] == "Slice-Wise" and self.solutions[sliceIdx] is not None:
+            if self.shimMode == ShimMode.SLICE and self.solutions[sliceIdx] is not None:
                 self.log("setting shim but passing here")
                 pass
             # setting center frequency
