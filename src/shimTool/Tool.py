@@ -109,6 +109,7 @@ class Tool:
             None  # 3d array of the shimmed b0 map; Shimming is Slice-Wise -> i.e. one slice is filled at a time
         )
 
+        # TODO(vol): need to figure out how to handle these based on which mode is set...
         # solution constants; solutions based on the basis maps, not necessary the actual current / Hz / lingrad values
         self.solutions: List[np.ndarray] = None
         # the actual values that will be used to apply the shim currents/ cf offset / lingrad value
@@ -130,6 +131,7 @@ class Tool:
             None  # the intersection of roi, and all nonNan sections of background and basis maps
         )
 
+        # TODO(vol): figure out how to make it not dependent on these somehow....
         # the stat string outputs
         self.shimStatStrs: List[List[str]] = [None, None, None]  # string form stats
         self.shimStats: List[List] = [None, None, None]  # numerical form stats
@@ -138,10 +140,10 @@ class Tool:
         # the 3d data for each respective view; they should be cropped with respect to the Final Mask when they are set by the shimTool
         self.viewData = np.array(
             [
-                None,  # 3D data, unfilled, for roi view
+                None,  # single set of 3D data, unfilled, for roi view
                 # three sets of 3D data, unfilled, for shim view (background, estimated, actual)
                 np.array([None, None, None], dtype=object),
-                # 4D data, unfilled, for basis views
+                # unfilled 4 dimension numpy array: # of basis views x 3D data for each basis view
                 np.array([None for _ in range(self.shimInstance.numLoops + 3)], dtype=object),
             ],
             dtype=object,
@@ -327,6 +329,7 @@ class Tool:
         self.basisB0maps = subtractBackground(self.backgroundB0Map, self.rawBasisB0maps)
         self.computeMask()
 
+        # TODO(vol) add method to compute for different volume vs slice mode here
         self.solutions = [None for _ in range(self.backgroundB0Map.shape[1])]
         for i in range(self.backgroundB0Map.shape[1]):
             # want to include slice in front and behind in the mask when solving currents though:
@@ -345,7 +348,7 @@ class Tool:
                 debug=self.debugging,
             )
 
-        self.getSolutionsToApply()  # compute the actual values we will apply to the shim system from these solutions
+        self.setSolutionsToApply()  # compute the actual values we will apply to the shim system from these solutions
 
         # if not all currents are none
         if not all([c is None for c in self.solutions]):
@@ -429,7 +432,7 @@ class Tool:
             )
             plt.close(fig)
 
-    def getSolutionsToApply(self):
+    def setSolutionsToApply(self):
         """From the Solutions, set the actual values that will be applied to the shim system."""
         # cf does not change.
         self.solutionValuesToApply = [

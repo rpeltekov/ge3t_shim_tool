@@ -1168,7 +1168,7 @@ class Gui(QMainWindow):
             self.enableSlowButtons()
 
         trigger.finished.connect(actionAndUpdate)
-        if self.shimTool.shimModes[self.shimTool.shimMode] == "Slice-Wise" and self.shimTool.obtainedBackground():
+        if self.shimTool.shimMode == ShimMode.SLICE and self.shimTool.obtainedBackground():
             sliceIdx = self.getShimSliceIndex()
         else:
             sliceIdx = None
