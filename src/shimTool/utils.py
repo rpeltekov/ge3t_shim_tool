@@ -9,8 +9,6 @@ import numpy as np
 import paramiko
 from matplotlib import pyplot as plt
 
-from shimTool.guiUtils import *
-
 
 def load_config(filename):
     with open(filename, "r") as file:
@@ -137,7 +135,7 @@ def saveHistogramsOverlayed(directory, titles, data, slice_index):
                 density=True,
             )
     else:
-        print(f"DEBUG: not expected data shape, first dimension is not 3")
+        print("DEBUG: not expected data shape, first dimension is not 3")
         return
     ax.legend()
     ax.set_xlabel("Offresonance (Hz)")
@@ -146,12 +144,13 @@ def saveHistogramsOverlayed(directory, titles, data, slice_index):
         output_path = os.path.join(directory, f"overlayed_histograms_{slice_index}.png")
     else:
         ax.set_title("Offresonance Over Full ROI")
-        output_path = os.path.join(directory, f"overlayed_histograms_Volume.png")
+        output_path = os.path.join(directory, "overlayed_histograms_Volume.png")
     fig.savefig(output_path, bbox_inches="tight", transparent=False)
     plt.close(fig)
     return output_path
 
-    ##### OTHER METHODS ######
+
+# OTHER METHODS #
 
 
 def execSSHCommand(host, hvPort, hvUser, hvPassword, command):
@@ -187,7 +186,7 @@ def execRsyncCommand(hvPass, hvUser, host, source, destination):
 
 def getLastSetGradients(host, hvPort, hvUser, hvPassword):
     # Command to extract the last successful setting of the shim currents
-    print(f"Debug: attempting to find the last used gradients")
+    print("Debug: attempting to find the last used gradients")
     command = "tail -n 100 /usr/g/service/log/Gradient.log | grep 'Prescn Success: AS Success' | tail -n 1"
     output = execSSHCommand(host, hvPort, hvUser, hvPassword, command)
     if output:
@@ -198,8 +197,8 @@ def getLastSetGradients(host, hvPort, hvUser, hvPassword):
             gradients = [int(match.group(i)) for i in range(1, 4)]
             print(f"UTILS: Debug: found that linear shims got set to {gradients}")
             return np.array(gradients)
-        print(f"DEBUG: no matches!")
-    print(f"Debug: failed to find the last used gradients")
+        print("DEBUG: no matches!")
+    print("Debug: failed to find the last used gradients")
     return None
 
 

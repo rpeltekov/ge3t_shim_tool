@@ -3,7 +3,6 @@ so this nearly works, it just does not pipe the output of the exsi client to the
 however, it does look like it is successful in letting you call the exsi client from the parent process and run tasks.
 """
 
-
 import json
 import logging
 import multiprocessing

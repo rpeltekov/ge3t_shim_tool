@@ -52,7 +52,7 @@ class shim:
             if not self.readyEvent.is_set():
                 self.readyEvent.wait()
             self.connectedEvent.set()
-            print(f"INFO SHIM CLIENT: Connection Created successfully")
+            print("INFO SHIM CLIENT: Connection Created successfully")
 
         t = threading.Thread(target=waitForConnection)
         t.daemon = True
@@ -61,7 +61,7 @@ class shim:
     def openPort(self):
         try:
             self.ser = serial.Serial(self.port, self.baudRate, timeout=self.defaultTimeout)
-            print(f"INFO SHIM CLIENT: Serial port opened successfully")
+            print("INFO SHIM CLIENT: Serial port opened successfully")
             self.running = True
         except serial.SerialException as e:
             print(f"Debug: Failed to open serial port: {e}")
@@ -73,7 +73,7 @@ class shim:
             self.readThread.daemon = True
             self.readThread.start()
         else:
-            print(f"Debug SHIM CLIENT: Failed to start reading thread. Serial port is not open")
+            print("Debug SHIM CLIENT: Failed to start reading thread. Serial port is not open")
 
     def startCommandProcessThread(self):
         def processCommands():
@@ -164,7 +164,7 @@ class shim:
                 expCurrent = float(expected.group(3))
                 if (expBoard != board) or (expChannel != channel) or (f"{current:.2f}" != f"{expCurrent:.2f}"):
                     fail = True
-                    print(f"Debug: Failed Command Mismatch in current setting:")
+                    print("Debug: Failed Command Mismatch in current setting:")
                     print(f"\tExpected:\t{expBoard}, {expChannel}, {expCurrent:.2f}")
                     print(f"\tGot:\t{board}, {channel}, {current:.2f}")
                 else:
@@ -220,7 +220,7 @@ class shim:
         self.running = False
         if self.ser:
             self.ser.close()
-            print(f"INFO SHIM CLIENT: Closed connection to arduino. bye.")
+            print("INFO SHIM CLIENT: Closed connection to arduino. bye.")
 
     def __del__(self):
         self.stop()
@@ -254,12 +254,6 @@ class shim:
     def shimGetCurrent(self):
         # Could be used to double check that the channels calibrated
         self.send("I")
-
-    @launchInThread
-    @requireShimDriverConnected
-    def shimSetCurrentManual(self, channel, current, board):
-        """helper function to set the current for a specific channel on a specific board."""
-        self.send(f"X {board} {channel} {current}")
 
     @launchInThread
     @requireShimDriverConnected

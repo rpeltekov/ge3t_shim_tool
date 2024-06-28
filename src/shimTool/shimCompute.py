@@ -4,8 +4,7 @@ import numpy as np
 from cvxopt import matrix, solvers
 from skimage.restoration import unwrap_phase
 
-from shimTool.dicomUtils import *
-from shimTool.utils import *
+from shimTool.dicomUtils import extractComplexImageData, listSubDirs
 
 
 def compute_b0map(first, second, te1, te2):
@@ -133,9 +132,10 @@ def solveCurrents(
     try:
         solvers.options["show_progress"] = False
         res = solvers.qp(matrix(p), matrix(q), matrix(g), matrix(h))
-    except ValueError as e:
+    except ValueError:
         print(
-            f"DEBUG: Error in solving the problem; Likely due to singular matrix bc trying to solve for something outside ROI"
+            "DEBUG: Error in solving the problem;"
+            + "Likely due to singular matrix bc trying to solve for something outside ROI"
         )
         return None
 

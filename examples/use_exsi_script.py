@@ -2,6 +2,7 @@
 This is an example of how to use the exsi_client module individually to control the scanner without the rest of the shim tool.
 Note: all of the conditional variables that are used to wait on particular events that the exsi client is doing in different events.
 """
+
 import json
 import os
 import queue

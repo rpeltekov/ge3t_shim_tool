@@ -1,6 +1,5 @@
 """The Shim Tool Object for orchestrating the shim process."""
 
-
 import os
 import pickle
 import sys
@@ -13,6 +12,7 @@ from shimTool.dicomUtils import *
 
 # Import the custom client classes and util functions
 from shimTool.exsi_client import exsi
+from shimTool.guiUtils import Trigger, ellipsoidROI
 from shimTool.shim_client import shim
 from shimTool.shimCompute import *
 from shimTool.utils import *
@@ -100,7 +100,9 @@ class Tool:
         self.basisB0maps: List[np.ndarray] = [
             None for _ in range(self.shimInstance.numLoops + 3)
         ]  # 3d arrays of the basis b0 maps without background
-        self.expectedB0Map: np.ndarray = None  # 3d array of the shimmed b0 map; Shimming is Slice-Wise -> i.e. one slice is filled at a time per solution
+        self.expectedB0Map: np.ndarray = (
+            None  # 3d array of the shimmed b0 map; Shimming is Slice-Wise -> i.e. one slice is filled at a time per solution
+        )
         self.shimmedB0Map: np.ndarray = (
             None  # 3d array of the shimmed b0 map; Shimming is Slice-Wise -> i.e. one slice is filled at a time
         )
