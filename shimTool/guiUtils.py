@@ -2,26 +2,19 @@
 File for all the Utility functions for the GUI
 """
 
-import time
-from PyQt6.QtWidgets import QMessageBox, QPushButton, QLabel, QLineEdit, QHBoxLayout, QSlider, QSizePolicy, QCheckBox, QBoxLayout
-from PyQt6.QtCore import pyqtSignal, QObject, QThread, pyqtSignal, Qt
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene
-from PyQt6.QtGui import QValidator, QIntValidator, QImage
-from functools import partial
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-import numpy as np
-import numpy as np
 import inspect
 import time
 from functools import partial
 
+import matplotlib.pyplot as plt
 import numpy as np
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QImage, QIntValidator, QValidator
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from PyQt6.QtCore import QObject, QRectF, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QImage, QIntValidator, QLinearGradient, QPainter, QValidator
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QCheckBox,
+    QGraphicsItem,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -32,6 +25,45 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSlider,
 )
+
+
+class ColorBarItem(QGraphicsItem):
+    def __init__(self, min_val, max_val, parent=None):
+        super(ColorBarItem, self).__init__(parent)
+        self.min_val = max_val
+        self.max_val = min_val
+        self.num_ticks = 6  # Number of tick marks on the color bar
+
+    def boundingRect(self):
+        return QRectF(0, 0, 50, 475)  # width and height of the color bar
+
+    def paint(self, painter, option, widget):
+        gradient = QLinearGradient(0, 0, 0, 475)
+        gradient.setColorAt(0, QColor(0, 0, 0))  # black
+        gradient.setColorAt(1, QColor(255, 255, 255))  # white
+
+        rect = self.boundingRect()
+        painter.fillRect(rect, gradient)
+
+        # Calculate positions for numerical labels
+        tick_positions = [rect.top() + i * (rect.height() / (self.num_ticks - 1)) for i in range(self.num_ticks)]
+
+        # Draw tick marks and labels
+        font = QFont()
+        font.setPixelSize(8)  # Adjust font size as needed
+        painter.setFont(font)
+
+        painter.setPen(QColor(0, 0, 0))  # black
+        for pos in tick_positions:
+            pos_int = round(pos)
+            # print(pos_int)
+            # print(rect.left())
+            painter.drawLine(round(rect.left()), pos_int, round(rect.left()) + 10, pos_int)  # Draw tick mark
+            print(self.max_val)
+            print(self.min_val)
+            value = self.max_val - ((pos_int - rect.top()) / rect.height()) * (self.max_val - self.min_val)
+            # print(value)
+            painter.drawText(rect.adjusted(15, pos - 8, -5, 0), f"{value:.2f}")
 
 
 class ColorBar(QGraphicsView):
@@ -46,15 +78,20 @@ class ColorBar(QGraphicsView):
         self.scene.clear()
         if data.size == 0:
             return
+        min_val = np.nanmin(data)
+        max_val = np.nanmax(data)
+        self.colorbar_item = ColorBarItem(min_val, max_val)
+        self.scene.addItem(self.colorbar_item)
 
-        fig, ax = plt.subplots(figsize=(1, 5))
-        norm = plt.Normalize(vmin=np.nanmin(data), vmax=np.nanmax(data))
-        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='gray'), cax=ax)
+        # fig, ax = plt.subplots(figsize=(1, 5))
+        # norm = plt.Normalize(vmin=np.nanmin(data), vmax=np.nanmax(data))
+        # fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='gray'), cax=ax)
 
-        canvas = FigureCanvas(fig)
-        canvas.draw()
-        pixmap = canvas.grab()
-        self.colorbar_item = self.scene.addPixmap(pixmap)
+        # canvas = FigureCanvas(fig)
+        # canvas.draw()
+        # pixmap = canvas.grab()
+        # self.colorbar_item = self.scene.addPixmap(pixmap)
+
 
 class LogMonitorThread(QThread):
     update_log = pyqtSignal(str)
@@ -81,30 +118,37 @@ class LogMonitorThread(QThread):
 
 
 class ImageViewer(QGraphicsView):
-    def __init__(self, parent=None, label=None, layout=None):
+    def __init__(self, parent=None, layout=None):
         super(ImageViewer, self).__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         self.pixmap_item = None
         self.qImage: QImage = None
         self.viewData = None  # 2D data that the image viewer is currently being set to show
-        self.label = label
-        if layout is not None:
-            self.colorbar = ColorBar()
-            self.colorbar.setFixedWidth(100)  # Set a fixed width for the color bar
-            self.colorbar.setFixedHeight(600)  # Match height with the viewer
+        self.label = QLabel()
+        self.width = 512
+        self.height = 512
+        self.setFixedSize(self.width, self.height)  # Set a fixed size for the view
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        self.colorbar = ColorBar()
+        self.colorbar.setFixedWidth(60)  # Set a fixed width for the color bar
+        self.colorbar.setFixedHeight(self.height)  # Match height with the viewer
 
         # Layout to include image and color bar
-        #Not sure if I should put the part below in Gui.py or here, like most of the add widget functions have been in gui.py
+        # Not sure if I should put the part below in Gui.py or here, like most of the add widget functions have been in gui.py
 
-            layout.addWidget(self.colorbar)
+        hlayout = QHBoxLayout()
+        layout.addLayout(hlayout)
+        hlayout.addWidget(self, alignment=Qt.AlignmentFlag.AlignCenter)
+        hlayout.addWidget(self.colorbar)
+        layout.addWidget(self.label)
 
         # def update_colorbar(viewer, data):
         #     viewer.viewData = data
         #     viewer.colorbar.update_colorbar(data)
 
         # TODO issue #7 add color bar
-        #np.nanmax and nanmin, set black to minimum and white to maximum
+        # np.nanmax and nanmin, set black to minimum and white to maximum
 
     def set_pixmap(self, pixmap):
         if self.pixmap_item is None:
@@ -113,7 +157,7 @@ class ImageViewer(QGraphicsView):
             self.pixmap_item.setPixmap(pixmap)
         self.pixmap = pixmap.toImage()
 
-        if pixmap is not None:
+        if pixmap is not None and self.colorbar is not None:
             self.colorbar.update_colorbar(self.viewData)
 
     def mouseMoveEvent(self, event):

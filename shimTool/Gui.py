@@ -197,14 +197,7 @@ class Gui(QMainWindow):
         self.roiSliceIndexEntry.setEnabled(False)  # start off disabled -- no image is viewed yet!
 
         # setup image scene and view
-        self.roiViewLabel = QLabel()
-        newLayout = QHBoxLayout()
-        self.roiView = ImageViewer(self, self.roiViewLabel, layout=newLayout)
-        self.roiView.setFixedSize(512, 512)  # Set a fixed size for the view
-        self.roiView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        imageLayout.addLayout(newLayout)
-        newLayout.addWidget(self.roiView, alignment=Qt.AlignmentFlag.AlignCenter)
-        imageLayout.addWidget(self.roiViewLabel)
+        self.roiView = ImageViewer(self, layout=imageLayout)
         self.views += [self.roiView]
 
         # sliders for the ROI editor, as in xyz size and position sliders
@@ -318,12 +311,8 @@ class Gui(QMainWindow):
         # add another graphics scene visualizer
         # Setup QGraphicsView for image display
         # TODO issue #7 add a function to do all this and also make the color bar inherent
-        self.shimViewLabel = QLabel()
-        self.shimView = ImageViewer(self, self.shimViewLabel)
-        layout.addWidget(self.shimView, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.shimViewLabel)
-        self.shimView.setFixedSize(512, 512)  # Set a fixed size for the view
-        self.shimView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+
+        self.shimView = ImageViewer(self, layout=layout)
         self.views += [self.shimView]
 
         # add three statistics outputs using another non editable textedit widget
@@ -623,12 +612,7 @@ class Gui(QMainWindow):
         hlayout.addLayout(leftLayout)
 
         # add a graphics view for visualizing the basis function
-        self.basicViewLabel = QLabel()
-        self.basisView = ImageViewer(self, self.basicViewLabel)
-        leftLayout.addWidget(self.basisView, alignment=Qt.AlignmentFlag.AlignCenter)
-        leftLayout.addWidget(self.basicViewLabel)
-        self.basisView.setFixedSize(512, 512)  # Set a fixed size for the view
-        self.basisView.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        self.basisView = ImageViewer(self, layout=leftLayout)
         self.views += [self.basisView]
 
         # add a slider for selecting the basis function
