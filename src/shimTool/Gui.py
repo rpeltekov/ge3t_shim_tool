@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from shimTool.guiUtils import *
-from shimTool.Tool import Tool, ShimMode
+from shimTool.Tool import ShimMode, Tool
 from shimTool.utils import *
 
 
@@ -191,8 +191,10 @@ class Gui(QMainWindow):
         basicLayout.addLayout(imageLayout)
 
         # Slider for selecting slices
-        self.roiSliceIndexPack = addLabeledSliderAndEntry(imageLayout, "Slice Index (Int): ", self.updateROIImageDisplay)
-        disableWidgetsInList(self.roiSliceIndexPack) # start off disabled -- no image is viewed yet!
+        self.roiSliceIndexPack = addLabeledSliderAndEntry(
+            imageLayout, "Slice Index (Int): ", self.updateROIImageDisplay
+        )
+        disableWidgetsInList(self.roiSliceIndexPack)  # start off disabled -- no image is viewed yet!
 
         # setup image scene and view
         self.roiViewLabel = QLabel()
@@ -337,7 +339,7 @@ class Gui(QMainWindow):
         layout.addWidget(shimStatTextLabel)
         layout.addLayout(statsLayout)
 
-        self.saveResultsButton = addButtonConnectedToFunction(layout, "Save results", self.shimTool.saveResults)
+        self.saveResultsButton = addButtonConnectedToFunction(layout, "Save results (Not Verified)", self.shimTool.saveResults)
 
     def setupShimRightView(self, layout: QBoxLayout):
         """Setup the right side of the shim tab view"""
@@ -452,7 +454,9 @@ class Gui(QMainWindow):
         boundingLayout.addLayout(calibrationStrengthView)
 
         # for the gradient strengths
-        self.shimGradientStrengthPack = addLabeledSliderAndEntry(calibrationStrengthView, "Gradient Cal (tick?): ", updateGradientCalStrength)
+        self.shimGradientStrengthPack = addLabeledSliderAndEntry(
+            calibrationStrengthView, "Gradient Cal (tick?): ", updateGradientCalStrength
+        )
         updateSliderEntryLimits(
             self.shimGradientStrengthPack,
             self.shimTool.minGradientCalStrength,
@@ -461,18 +465,16 @@ class Gui(QMainWindow):
         )
 
         # for current slider and entry
-        self.shimCalCurrentPack = addLabeledSliderAndEntry(calibrationStrengthView, "Loop Cal (mA): ", updateLoopCalCurrent)
+        self.shimCalCurrentPack = addLabeledSliderAndEntry(
+            calibrationStrengthView, "Loop Cal (mA): ", updateLoopCalCurrent
+        )
         updateSliderEntryLimits(
             self.shimCalCurrentPack,
             self.shimTool.minCalibrationCurrent,
             self.shimTool.maxCalibrationCurrent,
             self.shimTool.loopCalCurrent,
         )
-        self.slowButtons += [
-            *self.shimDeltaTEPack,
-            *self.shimGradientStrengthPack,
-            *self.shimCalCurrentPack
-        ]
+        self.slowButtons += [*self.shimDeltaTEPack, *self.shimGradientStrengthPack, *self.shimCalCurrentPack]
 
     def setupShimScanUI(self, layout):
         """
@@ -587,11 +589,12 @@ class Gui(QMainWindow):
             debuglabel.setObjectName("withBorderDottedTop")
             boundingLayout.addWidget(debuglabel)
             self.doEvalApplShimsButton = addButtonConnectedToFunction(
-                boundingLayout, "Evaluate Applied Shims", self.doEvalAppliedShims
+                boundingLayout, "Evaluate Applied Shims (Not Maintained RN)", lambda: None  # self.doEvalAppliedShims
             )
             self.doAllShimmedScansButton = addButtonConnectedToFunction(
-                boundingLayout, "Shimmed Scan ALL Slices", self.doAllShimmedScans
+                boundingLayout, "Shimmed Scan ALL Slices (Not Maintained RN)", self.doAllShimmedScans
             )
+            disableWidgetsInList([self.doEvalApplShimsButton, self.doAllShimmedScansButton])
 
             self.slowButtons += [
                 self.doEvalApplShimsButton,
@@ -694,7 +697,7 @@ class Gui(QMainWindow):
                 getattr(self, checkboxName).setChecked(value)
 
         # re mask / update visualization
-        self.shimTool.applyMask()
+        self.shimTool.cropViewDataToFinalMask()
         self.updateAllDisplays()
 
     # ---------- Update Functions ---------- #
@@ -733,6 +736,7 @@ class Gui(QMainWindow):
 
     def toggleShimStyleRadio(self, id):
         self.shimTool.shimMode = ShimMode.SLICE if id == ShimMode.SLICE.value else ShimMode.VOLUME
+        self.updateShimImageAndStats()
 
     def updateLogOutput(self, log, text):
         log.append(text)
@@ -761,7 +765,10 @@ class Gui(QMainWindow):
         if viewDataSlice is not None:
             # Extract the slice and normalize it
             scale = self.viewMaxAbs[viewIndex]
-            if viewIndex > 0:
+            if np.isnan(viewDataSlice).all():
+                # mainly to get rid of the numpy runtime warning that pops up.
+                normalizedData = np.zeros_like(viewDataSlice)
+            elif viewIndex > 0:
                 # when we are looking at b0maps, the numbers can be negative
                 scale = 2 * scale
                 normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 127 + 127
@@ -935,30 +942,31 @@ class Gui(QMainWindow):
 
         # update the rest of the stats
 
-        # get the slice index from the slider
-        sliceIndex = self.getShimSliceIndex()
-        # set the text to the text boxes
-        # show as many stats as are available for the specific slice
-        prefixs = ["Background ", "Est. ", "Actual "]
-        for i in range(3):
-            text = "\nNo stats available"
-            if self.shimTool.shimStatStrs[i] is not None:
-                stats = self.shimTool.shimStatStrs[i][sliceIndex]
-                if stats is not None:
-                    text = stats
-            text = prefixs[i] + text
-            self.shimStatText[i].setText(text)
-
         # if original gradients / original center frequency available
         shimtxt = "Principle Sols: "
         shimtxt += f"OG CF = {self.shimTool.principleSols[0].astype(int)} Hz | "
         shimtxt += f"Default lin gradient shims = {self.shimTool.principleSols[1:4].astype(int)}"
         self.doShimProcedureLabel.setText(f"SHIM OPERATIONS; " + shimtxt)
 
+        # get the slice index from the slider
+        sliceIndex = self.getShimSliceIndex()
+
+        # set the text to the text boxes
+        # show as many stats as are available for the specific slice
+        prefixs = ["Background ", "Est. ", "Actual "]
+        for i in range(3):
+            text = "\nNo stats available"
+            stats = self.shimTool.getSolutionStrings(i, sliceIndex)
+            if stats is not None:
+                text = stats
+            text = prefixs[i] + text
+            self.shimStatText[i].setText(text)
+
         # if currents are available
-        if self.shimTool.solutionValuesToApply is not None:
-            if self.shimTool.solutionValuesToApply[sliceIndex] is not None:
-                solutions = self.shimTool.solutionValuesToApply[sliceIndex]
+        if self.shimTool.obtainedSolutions():
+            # update the texts for the solution values
+            if self.shimTool.getSolutionsToApply(sliceIndex) is not None:
+                solutions = self.shimTool.getSolutionsToApply(sliceIndex)
                 text = f"Δcf:{int(round(solutions[0]))} | "
                 numIter = self.shimTool.shimInstance.numLoops + 3
                 pref = ["x", "y", "z"]
@@ -972,7 +980,7 @@ class Gui(QMainWindow):
                 text = "No currents available "
             self.currentsDisplay.setText(text[:-1])
         else:
-            self.currentsDisplay.setText("No currents available")
+            self.currentsDisplay.setText("No Currents Available.")
 
     def toggleShimImage(self, id):
         """re-render the shim image based on the selected radio button"""
@@ -1007,9 +1015,7 @@ class Gui(QMainWindow):
         enableWidgetsInList(self.basisSliceIndexPack)
 
         # set the viewDataSlice to the desired slice from the whole 4D data set
-        self.viewDataSlice[2] = self.shimTool.viewData[2][self.getBasisFunctionIndex()][
-            :, self.getBasisSliceIndex()
-        ]
+        self.viewDataSlice[2] = self.shimTool.viewData[2][self.getBasisFunctionIndex()][:, self.getBasisSliceIndex()]
         return True
 
     def updateBasisView(self):
@@ -1216,54 +1222,39 @@ class Gui(QMainWindow):
             ),
         )
 
+    # NOT MAINTAINED
+    # --------------
     # @disableSlowButtonsTillDone
     # @requireExsiConnection
     # @requireShimConnection
     # @requireAssetCalibration
-    # def doShimmedScans(self):
-    #     """ Perform another set of scans now that it is shimmed """
-    #     if not self.setAllCurrentsMarker.isChecked():
-    #             createMessageBox("Note: Shim Process Not Performed",
-    #                              "If you want correct shims, click above buttons and redo.", "")
-    #             return
-    #     self.doShimmedScansMarker.setChecked(False)
-    #     def actionAndUpdate():
-    #         self.updateShimImageAndStats()
-    #         self.doShimmedScansMarker.setChecked(trigger.success)
-    #         self.enableSlowButtons()
+    # def doEvalAppliedShims(self):
+    #     """Scan with supposed set shims and evaluate how far from expected they are."""
+    #     if not self.shimTool.obtainedSolutions():
+    #         self.log("Need to perform background and loop calibration scans before running Eval Scan")
+    #         createMessageBox(
+    #             "Error: Background And Loop Cal Scans not Done",
+    #             "Need to perform background and loop calibration scans before setting currents.",
+    #             "You could set them manually if you wish to.",
+    #         )
+    #         return  # do nothing more
     #     trigger = Trigger()
-    #     trigger.finished.connect(actionAndUpdate)
-    #     kickoff_thread(self.shimTool.doShimmedScans, args=(self.getShimSliceIndex(), trigger,))
 
-    @disableSlowButtonsTillDone
-    @requireExsiConnection
-    @requireShimConnection
-    @requireAssetCalibration
-    def doEvalAppliedShims(self):
-        """Scan with supposed set shims and evaluate how far from expected they are."""
-        if not self.shimTool.obtainedSolutions():
-            self.log("Need to perform background and loop calibration scans before running Eval Scan")
-            createMessageBox(
-                "Error: Background And Loop Cal Scans not Done",
-                "Need to perform background and loop calibration scans before setting currents.",
-                "You could set them manually if you wish to.",
-            )
-            return  # do nothing more
-        trigger = Trigger()
+    #     def action():
+    #         self.updateShimImageAndStats()
+    #         self.enableSlowButtons()
 
-        def action():
-            self.updateShimImageAndStats()
-            self.enableSlowButtons()
+    #     trigger.finished.connect(action)
+    #     kickoff_thread(
+    #         self.shimTool.doEvalAppliedShims,
+    #         args=(
+    #             self.getShimSliceIndex(),
+    #             trigger,
+    #         ),
+    #     )
 
-        trigger.finished.connect(action)
-        kickoff_thread(
-            self.shimTool.doEvalAppliedShims,
-            args=(
-                self.getShimSliceIndex(),
-                trigger,
-            ),
-        )
-
+    # NOT MAINTAINED
+    # --------------
     @disableSlowButtonsTillDone
     @requireExsiConnection
     @requireShimConnection

@@ -4,8 +4,8 @@
 import os
 import pickle
 import sys
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 from typing import List
 
 import numpy as np
@@ -22,6 +22,7 @@ from shimTool.utils import *
 class ShimMode(Enum):
     SLICE = 0
     VOLUME = 1
+
 
 class Tool:
     def __init__(self, config, debugging=True):
@@ -81,20 +82,26 @@ class Tool:
         self.minCalibrationCurrent = 100  # 100 mA
         self.maxCalibrationCurrent = 2000  # 2 A
         self.loopCalCurrent = 1000  # 1 A
-        self.shimMode = ShimMode.SLICE # 0 for Slice-Wise or 1 for Volume shimming
 
-        # ----------- Shim Tool State ----------- #
-        # Scan session attributes
-        self.autoPrescanDone = False
-
-        self.assetCalibrationDone = False
-
-        self.roiEditorEnabled = False
-
+        # tool file directories
         self.gehcExamDataPath = None  # the path to the exam data on the GE Server
         self.localExamRootDir = None  # Where the raw dicom data gets stored, once pulled from the GE Server
-        self.resultsDir = None  # location to save figures to
+        self.resultsDir = None  # location to save figures and results to
         self.backgroundDCMdir = None  # the specific local Dicom Directory for the background image
+
+        # ----------- Shim Tool State ----------- #
+        self.shimMode = ShimMode.SLICE  # 0 for Slice-Wise or 1 for Volume shimming
+
+        # Scan session attributes
+        self.autoPrescanDone = False
+        self.assetCalibrationDone = False
+
+        # masks
+        self.ROI = ellipsoidROI()
+        # 3d boolean mask in the same shape as the background data
+        self.roiMask: np.ndarray = None
+        # the intersection of roi, and all nonNan sections of background and basis maps
+        self.finalMask: np.ndarray = None
 
         # 3d data arrays
         self.backgroundB0Map: np.ndarray = None  # 3d array of the background b0 map
@@ -104,39 +111,41 @@ class Tool:
         self.basisB0maps: List[np.ndarray] = [
             None for _ in range(self.shimInstance.numLoops + 3)
         ]  # 3d arrays of the basis b0 maps without background
-        self.expectedB0Map: np.ndarray = None  # 3d array of the shimmed b0 map; Shimming is Slice-Wise -> i.e. one slice is filled at a time per solution
-        self.shimmedB0Map: np.ndarray = (
-            None  # 3d array of the shimmed b0 map; Shimming is Slice-Wise -> i.e. one slice is filled at a time
-        )
+        self.expectedB0Map: np.ndarray = None  # 3d array of the shimmed b0 map;
+        self.shimmedB0Map: np.ndarray = None  # 3d array of the shimmed b0 map;
 
-        # TODO(vol): need to figure out how to handle these based on which mode is set...
+        # SOLUTION Data Structures
+        # this is the base solution that is provided by autoprescan or when user overwrites background with solution
+        self.principleSols = self.resetPrincipleSols()
+
+        # FOR SLICE MODE
         # solution constants; solutions based on the basis maps, not necessary the actual current / Hz / lingrad values
-        self.solutions: List[np.ndarray] = None
+        self.solutionsPerSlice: List[np.ndarray] = None
         # the actual values that will be used to apply the shim currents/ cf offset / lingrad value
-        self.solutionValuesToApply: List[np.ndarray] = None  # will be in form of Hz, number for the lingrad, and Amps
+        self.solutionValuesToApplyPerSlice: List[
+            np.ndarray
+        ] = None  # will be in form of Hz, number for the lingrad, and Amps
+        # the stat string outputs
+        self.shimStatStrsPerSlice: List[List[str]] = [None, None, None]  # string form stats
+        self.shimStatsPerSlice: List[List] = [None, None, None]  # numerical form stats
+
+        # FOR VOLUME MODE
+        self.solutionsVolume: np.ndarray = None
+        # the actual values that will be used to apply the shim currents/ cf offset / lingrad value
+        self.solutionValuesToApplyVolume: np.ndarray = None  # will be in form of Hz, number for the lingrad, and Amps
+        # the stat string outputs
+        self.shimStatStrsVolume: List[str] = [None, None, None]  # string form stats
+        self.shimStatsVolume: List = [None, None, None]  # numerical form stats
+
+        # TODO#28: maybe a data structure to not have the repetitive additions above?
 
         # state getter functions
         self.obtainedBackground = lambda: self.backgroundB0Map is not None
         self.obtainedBasisMaps = lambda: self.basisB0maps[0] is not None
-        self.obtainedSolutions = lambda: self.solutions is not None
+        self.obtainedSolutions = lambda: self.solutionsVolume is not None
         self.obtainedShimmedB0Map = lambda: self.shimmedB0Map is not None
 
-        # this is the base solution that is provided by autoprescan or when user overwrites background with existing solution
-        self.principleSols = self.resetPrincipleSols()
-
-        self.ROI = ellipsoidROI()
-        # masks
-        self.roiMask: np.ndarray = None  # 3d boolean mask in the same shape as the background data
-        self.finalMask: np.ndarray = (
-            None  # the intersection of roi, and all nonNan sections of background and basis maps
-        )
-
-        # TODO(vol): figure out how to make it not dependent on these somehow....
-        # the stat string outputs
-        self.shimStatStrs: List[List[str]] = [None, None, None]  # string form stats
-        self.shimStats: List[List] = [None, None, None]  # numerical form stats
-
-        # ----------- Shim Tool GUI Parameters ----------- #
+        # ----------- Shim Tool GUI States ----------- #
         # the 3d data for each respective view; they should be cropped with respect to the Final Mask when they are set by the shimTool
         self.viewData = np.array(
             [
@@ -193,7 +202,6 @@ class Tool:
         attr_names = [
             "assetCalibrationDone",
             "autoPrescanDone",
-            "roiEditorEnabled",
             "backgroundB0Map",
             "rawBasisB0maps",
             "basisB0maps",
@@ -245,6 +253,35 @@ class Tool:
                 self.log(f"ERROR: Failed to load state: {e}")
                 return
 
+    def getSolutions(self, sliceIdx=None):
+        if self.shimMode == ShimMode.SLICE and sliceIdx is not None:
+            return self.solutionsPerSlice[sliceIdx]
+        elif self.shimMode == ShimMode.VOLUME:
+            return self.solutionsVolume
+        else:
+            self.log(f"Error: No Solution for mode: {self.shimMode} and sliceIdx: {sliceIdx}")
+            return None
+
+    def getSolutionsToApply(self, sliceIdx=None):
+        if self.shimMode == ShimMode.SLICE and sliceIdx is not None:
+            return self.solutionValuesToApplyPerSlice[sliceIdx]
+        elif self.shimMode == ShimMode.VOLUME:
+            return self.solutionValuesToApplyVolume
+        else:
+            self.log(f"Error: No Solution 'To Apply' for mode: {self.shimMode} and sliceIdx: {sliceIdx}")
+            return None
+
+    def getSolutionStrings(self, mapIdx, sliceIdx=None):
+        if self.shimMode == ShimMode.SLICE and sliceIdx is not None and self.shimStatStrsPerSlice[mapIdx] is not None: 
+            return self.shimStatStrsPerSlice[mapIdx][sliceIdx]
+        elif self.shimMode == ShimMode.VOLUME:
+            return self.shimStatStrsVolume[mapIdx]
+        else:
+            self.log(
+                f"No Solution Strings for mode: {self.shimMode} and mapIdx {mapIdx} and sliceIdx: {sliceIdx}"
+            )
+            return None
+
     # ----------- Shim Tool management and compute Functions ----------- #
 
     def computeMask(self):
@@ -252,8 +289,10 @@ class Tool:
         self.finalMask = createMask(self.backgroundB0Map, self.basisB0maps, self.ROI.getROIMask())
         self.log(f"Computed Mask from background, basis and ROI.")
 
-    def applyMask(self):
-        """Update the viewable data with the mask applied"""
+    def cropViewDataToFinalMask(self):
+        """
+        Update the viewable data with the mask applied. i.e. crop it to the final ROI.
+        """
 
         maps = [self.backgroundB0Map, self.expectedB0Map, self.shimmedB0Map]
 
@@ -288,10 +327,14 @@ class Tool:
             self.principleSols[1:4] = self.exsiInstance.ogLinearGradients
 
     def resetShimSols(self):
-        self.solutions = None
-        self.solutionValuesToApply = None
-        self.shimStats = [None, None, None]
-        self.shimStatStrs = [None, None, None]
+        self.solutionsPerSlice = None
+        self.solutionValuesToApplyPerSlice = None
+        self.solutionsVolume = None
+        self.solutionValuesToApplyVolume = None
+        self.shimStatsPerSlice = [None, None, None]
+        self.shimStatStrsPerSlice = [None, None, None]
+        self.shimStatsPerSlice = [None, None, None]
+        self.shimStatStrsPerSlice = [None, None, None]
         self.expectedB0Map = None
         self.shimmedB0Map = None
 
@@ -301,8 +344,8 @@ class Tool:
         This will be used as a new background, and all of the "shimmed" scans done till now will be deleted.
         The solution will also be saved as a "principle solution" as if a prescan was done and it landed at these solved values
         """
-        if self.solutionValuesToApply is not None and sliceIdx is not None:
-            self.principleSols = self.principleSols + self.solutionValuesToApply[sliceIdx]
+        if self.solutionValuesToApplyPerSlice is not None and sliceIdx is not None:
+            self.principleSols = self.principleSols + self.solutionValuesToApplyPerSlice[sliceIdx]
         self.backgroundB0Map = self.shimmedB0Map
         self.resetShimSols()
         self.recomputeCurrentsAndView()
@@ -314,7 +357,7 @@ class Tool:
         self.backgroundB0Map = b0maps[0]
 
         self.computeMask()
-        self.applyMask()
+        self.cropViewDataToFinalMask()
 
     def computeBasisB0maps(self):
         # assumes that you have just gotten background by queueBasisPairScan
@@ -329,40 +372,78 @@ class Tool:
         self.basisB0maps = subtractBackground(self.backgroundB0Map, self.rawBasisB0maps)
         self.computeMask()
 
-        # TODO(vol) add method to compute for different volume vs slice mode here
-        self.solutions = [None for _ in range(self.backgroundB0Map.shape[1])]
+        # Compute the Currents Per Slice.
+        self.solutionsPerSlice = [None for _ in range(self.backgroundB0Map.shape[1])]
         for i in range(self.backgroundB0Map.shape[1]):
-            # want to include slice in front and behind in the mask when solving currents though:
-            mask = maskOneSlice(self.finalMask, i)
+            # Get mask containing the slice in question
+            centerMask = maskOneSlice(self.finalMask, i)
+            centerMaskIsEmpty = (~centerMask).all()
+
+            # Want to include slice in front and behind in the mask when solving currents for Grad smoothness
+            neighborsMask = centerMask
+            leftNeighborIsEmpty = True
+            rightNeighborIsEmpty = True
             if i > 0:
-                mask = np.logical_or(mask, maskOneSlice(self.finalMask, i - 1))
+                leftNeighbor = maskOneSlice(self.finalMask, i - 1)
+                leftNeighborIsEmpty = (~leftNeighbor).all()
+                neighborsMask = np.logical_or(neighborsMask, leftNeighbor)
             if i < self.backgroundB0Map.shape[1] - 1:
-                mask = np.logical_or(mask, maskOneSlice(self.finalMask, i + 1))
-            # NOTE: the first and last current that is solved will be for an empty slice...
-            self.solutions[i] = solveCurrents(
+                rightNeighbor = maskOneSlice(self.finalMask, i - 1)
+                rightNeighborIsEmpty = (~rightNeighbor).all()
+                neighborsMask = np.logical_or(neighborsMask, rightNeighbor)
+
+            if centerMaskIsEmpty and (leftNeighborIsEmpty or rightNeighborIsEmpty):
+                # self.log(f"Slice {i} and 1 or more neighbors are empty. Skipping.")
+                continue
+
+            # Solve the solution currents for the slice
+            self.solutionsPerSlice[i] = solveCurrents(
                 self.backgroundB0Map,
                 self.basisB0maps,
-                mask,
+                neighborsMask,
                 self.gradientCalStrength,
                 self.loopCalCurrent,
                 debug=self.debugging,
             )
 
+        # Compute the currents for the selected ROI
+        self.solutionsVolume = solveCurrents(
+            self.backgroundB0Map,
+            self.basisB0maps,
+            self.finalMask,
+            self.gradientCalStrength,
+            self.loopCalCurrent,
+            debug=self.debugging,
+        )
+
         self.setSolutionsToApply()  # compute the actual values we will apply to the shim system from these solutions
 
         # if not all currents are none
-        if not all([c is None for c in self.solutions]):
+        if not all([c is None for c in self.solutionsPerSlice]):
             self.expectedB0Map = self.backgroundB0Map.copy()
-            for i in range(self.backgroundB0Map.shape[1]):
-                if self.solutions[i] is not None:
-                    self.expectedB0Map[:, i, :] += self.solutions[i][0] * np.ones(self.backgroundB0Map[:, 0, :].shape)
+            if self.shimMode == ShimMode.SLICE:
+                for i in range(self.backgroundB0Map.shape[1]):
+                    if self.solutionsPerSlice[i] is not None:
+                        self.expectedB0Map[:, i, :] += self.solutionsPerSlice[i][0] * np.ones(
+                            self.backgroundB0Map[:, 0, :].shape
+                        )
+                        numIter = self.shimInstance.numLoops + 3
+                        for j in range(numIter):
+                            self.expectedB0Map[:, i, :] += (
+                                self.solutionsPerSlice[i][j + 1] * self.basisB0maps[j][:, i, :]
+                            )
+                    else:
+                        self.expectedB0Map[:, i, :] = np.nan
+            else:  # VOLUME
+                if self.solutionsVolume is not None:
+                    self.expectedB0Map += self.solutionsVolume[0] * np.ones(self.backgroundB0Map.shape)
                     numIter = self.shimInstance.numLoops + 3
                     for j in range(numIter):
-                        # self.log(f"DEBUG: adding current {j} to shimData[1][{i}]")
-                        self.expectedB0Map[:, i, :] += self.solutions[i][j + 1] * self.basisB0maps[j][:, i, :]
+                        self.expectedB0Map += self.solutionsVolume[j + 1] * self.basisB0maps[j]
                 else:
-                    self.expectedB0Map[:, i, :] = np.nan
-            self.applyMask()
+                    self.expectedB0Map = np.nan
+
+            self.cropViewDataToFinalMask()
             self.log("Computed solutions and created new estimate shim maps")
             return True
         else:
@@ -375,77 +456,106 @@ class Tool:
         if self.shimmedB0Map is None:
             self.shimmedB0Map = np.full_like(b0maps[0], np.nan)
         self.shimmedB0Map[:, idx, :] = b0maps[0][:, idx, :]
-        self.applyMask()
+        self.cropViewDataToFinalMask()
 
     def evaluateShimImages(self):
         """evaluate the shim images (with the final mask applied) and store the stats in the stats array."""
         for i, map in enumerate([self.backgroundB0Map, self.expectedB0Map, self.shimmedB0Map]):
+            self.log(f"evaluating map {i}")
             if map is not None:
-                self.shimStatStrs[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
-                self.shimStats[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
+                self.shimStatStrsPerSlice[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
+                self.shimStatsPerSlice[i] = [None for _ in range(self.backgroundB0Map.shape[1])]
+                self.shimStatStrsVolume[i] = None
+                self.shimStatsVolume[i] = None
                 for j in range(self.backgroundB0Map.shape[1]):
                     mask = maskOneSlice(self.finalMask, j)
                     if not np.isnan(map[mask]).all():
                         statsstr, stats = evaluate(map[mask], self.debugging)
-                        self.shimStatStrs[i][j] = statsstr
-                        self.shimStats[i][j] = stats
+                        self.shimStatStrsPerSlice[i][j] = statsstr
+                        self.shimStatsPerSlice[i][j] = stats
+                self.log(f"finished setting the per slice stats for map {i}")
 
-    def evaluateAppliedShims(self, sliceIdx):
-        """
-        Compare the expected vs actual performance of every shim loop / linear gradient / CF offset and save the difference.
-        Helpful to evaluate if the solutions are actually what is being applied.
-        """
-        b0maps = compute_b0maps(self.shimInstance.numLoops + 4, self.localExamRootDir)
-        for i in range(len(b0maps)):
-            # save the b0map to the eval folder
-            evalDir = os.path.join(
-                self.config["rootDir"],
-                "results",
-                self.exsiInstance.examNumber,
-                "eval",
-                f"slice_{sliceIdx}",
-            )
-            if not os.path.exists(evalDir):
-                os.makedirs(evalDir)
-            np.save(os.path.join(evalDir, f"b0map{i}.npy"), b0maps[i][:, sliceIdx, :])
-            # compute the difference from the expected b0map
-            expected = np.copy(self.backgroundB0Map[:, sliceIdx, :])
-            if i == 0:
-                expected += self.solutions[sliceIdx][i] * np.ones(expected.shape)
-            else:
-                expected += self.solutions[sliceIdx][i] * self.basisB0maps[i - 1][:, sliceIdx, :]
+                statsstr, stats = evaluate(map[self.finalMask], self.debugging)
+                self.shimStatStrsVolume[i] = statsstr
+                self.shimStatsVolume[i] = stats
+                self.log(f"finished setting the volume stats for map {i}")
 
-            np.save(os.path.join(evalDir, f"expected{i}.npy"), expected)
+    # NOT Maintained
+    # ----------------
+    # def evaluateAppliedShims(self, sliceIdx):
+    #     """
+    #     Compare the expected vs actual performance of every shim loop / linear gradient / CF offset and save the difference.
+    #     Helpful to evaluate if the solutions are actually what is being applied.
+    #     """
+    #     b0maps = compute_b0maps(self.shimInstance.numLoops + 4, self.localExamRootDir)
+    #     for i in range(len(b0maps)):
+    #         # save the b0map to the eval folder
+    #         evalDir = os.path.join(
+    #             self.config["rootDir"],
+    #             "results",
+    #             self.exsiInstance.examNumber,
+    #             "eval",
+    #             f"slice_{sliceIdx}",
+    #         )
+    #         if not os.path.exists(evalDir):
+    #             os.makedirs(evalDir)
+    #         np.save(os.path.join(evalDir, f"b0map{i}.npy"), b0maps[i][:, sliceIdx, :])
+    #         # compute the difference from the expected b0map
+    #         expected = np.copy(self.backgroundB0Map[:, sliceIdx, :])
+    #         if i == 0:
+    #             expected += self.solutionsPerSlice[sliceIdx][i] * np.ones(expected.shape)
+    #         else:
+    #             expected += self.solutionsPerSlice[sliceIdx][i] * self.basisB0maps[i - 1][:, sliceIdx, :]
 
-            difference = b0maps[i][:, sliceIdx, :] - expected
-            fig, ax = plt.subplots(figsize=(8, 6))
-            im = ax.imshow(difference, cmap="jet", vmin=-100, vmax=100)
-            cbar = plt.colorbar(im)
+    #         np.save(os.path.join(evalDir, f"expected{i}.npy"), expected)
 
-            plt.title(f"difference basis{i}, slice{sliceIdx}", size=10)
-            plt.axis("off")
+    #         difference = b0maps[i][:, sliceIdx, :] - expected
+    #         fig, ax = plt.subplots(figsize=(8, 6))
+    #         im = ax.imshow(difference, cmap="jet", vmin=-100, vmax=100)
+    #         cbar = plt.colorbar(im)
 
-            fig.savefig(
-                os.path.join(evalDir, f"difference{i}.png"),
-                bbox_inches="tight",
-                transparent=False,
-            )
-            plt.close(fig)
+    #         plt.title(f"difference basis{i}, slice{sliceIdx}", size=10)
+    #         plt.axis("off")
+
+    #         fig.savefig(
+    #             os.path.join(evalDir, f"difference{i}.png"),
+    #             bbox_inches="tight",
+    #             transparent=False,
+    #         )
+    #         plt.close(fig)
 
     def setSolutionsToApply(self):
-        """From the Solutions, set the actual values that will be applied to the shim system."""
+        """
+        From the Solutions, set the actual values that will be applied to the shim system.
+        These differ because the solutions are in terms of multiples of basis maps, not necessarily the values that get applied.
+        """
+        # Setting Solutions for the each slice
         # cf does not change.
-        self.solutionValuesToApply = [
-            np.copy(self.solutions[i]) if self.solutions[i] is not None else None for i in range(len(self.solutions))
-        ]
-        for i in range(len(self.solutions)):
-            if self.solutions[i] is not None:
-                for j in range(1, 4):
-                    # update the lingrad values
-                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.gradientCalStrength
-                for j in range(4, len(self.solutions[i])):
-                    # update the current values
-                    self.solutionValuesToApply[i][j] = self.solutionValuesToApply[i][j] * self.loopCalCurrent
+        if self.solutionsPerSlice is not None:
+            self.solutionValuesToApplyPerSlice = [None for i in range(len(self.solutionsPerSlice))]
+            for i in range(len(self.solutionsPerSlice)):
+                if self.solutionsPerSlice[i] is not None:
+                    self.solutionValuesToApplyPerSlice[i] = np.copy(self.solutionsPerSlice[i])
+                    for j in range(1, 4):
+                        # update the lingrad values
+                        self.solutionValuesToApplyPerSlice[i][j] = (
+                            self.solutionsPerSlice[i][j] * self.gradientCalStrength
+                        )
+                    for j in range(4, len(self.solutionsPerSlice[i])):
+                        # update the current values
+                        self.solutionValuesToApplyPerSlice[i][j] = (
+                            self.solutionsPerSlice[i][j] * self.loopCalCurrent
+                        )
+
+        # for the Volume Solution to apply
+        if self.solutionsVolume is not None:
+            self.solutionValuesToApplyVolume = np.copy(self.solutionsVolume)
+            for j in range(1, 4):
+                # update the lingrad values
+                self.solutionValuesToApplyVolume[j] = self.solutionsVolume[j] * self.gradientCalStrength
+            for j in range(4, len(self.solutionsVolume)):
+                # update the current values
+                self.solutionValuesToApplyVolume[j] = self.solutionsVolume[j] * self.loopCalCurrent
 
     # ----------- SHIM Sub Operations and macro function helpers ----------- #
 
@@ -470,11 +580,13 @@ class Tool:
         """Send a shim loop set current command, but via the ExSI client
         to ensure that the commands are synced with other exsi commands."""
         principleOffset = self.principleSols[channel]
-        solutionToApply = self.solutionValuesToApply[sliceIdx][channel + 4]
+        current = solutionToApply + principleOffset
+
+        solution = self.getSolutions(sliceIdx)[channel + 4]
+        solutionToApply = self.getSolutionsToApply(sliceIdx)[channel + 4]
+
         if calibration:
             solutionToApply = self.loopCalCurrent
-        current += solutionToApply + principleOffset
-        solution = self.solutions[sliceIdx][channel + 4]
         self.log(
             f"Queueing loop {channel} to {current:.3f}: solution={solution:.3f}, solToAply={solutionToApply:.3f}, principle={principleOffset:.3f}"
         )
@@ -648,7 +760,7 @@ class Tool:
 
     def recomputeCurrentsAndView(self, trigger: Trigger = None):
         self.computeMask()
-        self.applyMask()
+        self.cropViewDataToFinalMask()
         if self.backgroundB0Map is not None and self.basisB0maps[0] is not None:
             self.expectedB0Map = None
             self.computeShimCurrents()
@@ -747,14 +859,12 @@ class Tool:
         """Set all the shim currents to the values that were computed and saved in the solutions array, for the specified slice"""
 
         if self.obtainedSolutions():
-            if self.shimMode == ShimMode.SLICE and self.solutions[sliceIdx] is not None:
-                self.log("setting shim but passing here")
-                pass
+
             # setting center frequency
-            self.setCenterFrequency(deltaCF=self.solutionValuesToApply[sliceIdx][0])
+            self.setCenterFrequency(deltaCF=self.getSolutionsToApply(sliceIdx)[0])
 
             # setting the linear shims
-            self.setLinGradients(linGrad=self.solutionValuesToApply[sliceIdx][1:4])
+            self.setLinGradients(linGrad=self.getSolutionsToApply(sliceIdx)[1:4])
 
             # setting the loop shim currents
             for i in range(self.shimInstance.numLoops):
@@ -763,112 +873,119 @@ class Tool:
         if trigger is not None:
             trigger.finished.emit()
 
-    @requireExsiConnection
-    @requireShimConnection
-    @requireAssetCalibration
-    def doEvalAppliedShims(self, sliceIdx, trigger: Trigger = None):
-        if self.solutions[sliceIdx] is None:
-            self.log("Error: No solutions computed for this slice.")
-            return
+    # NOT Maintained
+    # ----------------
+    # @requireExsiConnection
+    # @requireShimConnection
+    # @requireAssetCalibration
+    # def doEvalAppliedShims(self, sliceIdx, trigger: Trigger = None):
+    #     if self.solutionsPerSlice[sliceIdx] is None:
+    #         self.log("Error: No solutions computed for this slice.")
+    #         return
 
-        def queueAll():
-            # perform the calibration scans for the linear gradients
-            deltaCF = self.solutionValuesToApply[sliceIdx][0]
-            self.setCenterFrequency(deltaCF)
-            self.setLinGradients()
-            self.queueB0MapPairScan()
+    #     def queueAll():
+    #         # perform the calibration scans for the linear gradients
+    #         deltaCF = self.solutionValuesToApplyPerSlice[sliceIdx][0]
+    #         self.setCenterFrequency(deltaCF)
+    #         self.setLinGradients()
+    #         self.queueB0MapPairScan()
 
-            # need to wait for the previous scan to return all the images before doing this...
-            self.exsiInstance.sendWaitForImagesCollected()
-            self.setCenterFrequency(0)
+    #         # need to wait for the previous scan to return all the images before doing this...
+    #         self.exsiInstance.sendWaitForImagesCollected()
+    #         self.setCenterFrequency(0)
 
-            apply = self.solutionValuesToApply[sliceIdx]
-            for i in range(3):
-                linGrad = [0.0, 0.0, 0.0]
-                linGrad[i] = apply[1 + i]
-                self.queueFieldmapProtocol()
-                self.setLinGradients(linGrad)
-                self.queueTwoFgreSequences()
+    #         apply = self.solutionValuesToApplyPerSlice[sliceIdx]
+    #         for i in range(3):
+    #             linGrad = [0.0, 0.0, 0.0]
+    #             linGrad[i] = apply[1 + i]
+    #             self.queueFieldmapProtocol()
+    #             self.setLinGradients(linGrad)
+    #             self.queueTwoFgreSequences()
 
-            for i in range(self.shimInstance.numLoops):
-                self.queueFieldmapProtocol()
-                self.sendSyncedLoopSolution(i, sliceIdx=sliceIdx, ZeroOthers=True)
-                self.setLinGradients()
-                self.queueTwoFgreSequences()
+    #         for i in range(self.shimInstance.numLoops):
+    #             self.queueFieldmapProtocol()
+    #             self.sendSyncedLoopSolution(i, sliceIdx=sliceIdx, ZeroOthers=True)
+    #             self.setLinGradients()
+    #             self.queueTwoFgreSequences()
 
-        kickoff_thread(queueAll)
+    #     kickoff_thread(queueAll)
 
-        self.shimInstance.shimZero()
-        self.exsiInstance.images_ready_event.clear()
-        num_scans = (self.shimInstance.numLoops + 4) * 2
-        if self.countScansCompleted(num_scans):
-            self.log("DEBUG: just finished all the shim eval scans")
-            self.evaluateAppliedShims(sliceIdx)
-        else:
-            self.log("Error: Scans didn't complete")
-            self.exsiInstance.images_ready_event.clear()
-            self.exsiInstance.ready_event.clear()
-        if trigger:
-            trigger.finished.emit()
+    #     self.shimInstance.shimZero()
+    #     self.exsiInstance.images_ready_event.clear()
+    #     num_scans = (self.shimInstance.numLoops + 4) * 2
+    #     if self.countScansCompleted(num_scans):
+    #         self.log("DEBUG: just finished all the shim eval scans")
+    #         self.evaluateAppliedShims(sliceIdx)
+    #     else:
+    #         self.log("Error: Scans didn't complete")
+    #         self.exsiInstance.images_ready_event.clear()
+    #         self.exsiInstance.ready_event.clear()
+    #     if trigger:
+    #         trigger.finished.emit()
 
+    # NOT Maintained
+    # ----------------
     @requireExsiConnection
     @requireShimConnection
     @requireAssetCalibration
     def doAllShimmedScans(self, trigger: Trigger = None):
-        if self.expectedB0Map is not None:
-            if trigger is not None:
-                trigger.finished.emit()
-            return
+        trigger.finished.emit()
 
-        self.log(f"DEBUG: ________________________Do All Shim Scans____________________________________")
-        # compute how many scans needed, i.e. how many slices are not Nans out of the ROI
-        startIdx = None
-        numindex = 0
-        for i in range(self.backgroundB0Map.shape[1]):
-            if self.shimStats[1][i] is not None:
-                numindex += 1
-                if startIdx is None:
-                    startIdx = i
+    #     if self.expectedB0Map is not None:
+    #         if trigger is not None:
+    #             trigger.finished.emit()
+    #         return
 
-        if numindex == 0:
-            self.log("Error: No slices to shim")
-            if trigger is not None:
-                trigger.finished.emit()
-            return
+    #     self.log(f"DEBUG: ________________________Do All Shim Scans____________________________________")
+    #     # compute how many scans needed, i.e. how many slices are not Nans out of the ROI
+    #     startIdx = None
+    #     numindex = 0
+    #     for i in range(self.backgroundB0Map.shape[1]):
+    #         if self.shimStatsPerSlice[1][i] is not None:
+    #             numindex += 1
+    #             if startIdx is None:
+    #                 startIdx = i
 
-        self.log(f"DEBUG: Starting at index {startIdx} and doing {numindex} B0MAPS")
-        self.exsiInstance.images_ready_event.clear()
+    #     if numindex == 0:
+    #         self.log("Error: No slices to shim")
+    #         if trigger is not None:
+    #             trigger.finished.emit()
+    #         return
 
-        def queueAll():
-            for i in range(startIdx, startIdx + numindex):
-                if i > startIdx:
-                    self.exsiInstance.sendWaitForImagesCollected()
-                self.setAllShimCurrents(i)  # set all of the currents
-                self.queueB0MapPairScan()
+    #     self.log(f"DEBUG: Starting at index {startIdx} and doing {numindex} B0MAPS")
+    #     self.exsiInstance.images_ready_event.clear()
 
-        kickoff_thread(queueAll)
+    #     def queueAll():
+    #         for i in range(startIdx, startIdx + numindex):
+    #             if i > startIdx:
+    #                 self.exsiInstance.sendWaitForImagesCollected()
+    #             self.setAllShimCurrents(i)  # set all of the currents
+    #             self.queueB0MapPairScan()
 
-        for idx in range(startIdx, startIdx + numindex):
-            self.log(f"-------------------------------------------------------------")
-            self.log(f"DEBUG: STARTING B0MAP {idx-startIdx+1} / {numindex}; slice {idx}")
-            self.log(f"DEBUG: solutions for this slice are {self.solutions[idx]}")
-            self.log(f"DEBUG: applied values for this slice are {self.solutionValuesToApply[idx]}")
+    #     kickoff_thread(queueAll)
 
-            self.log(f"DEBUG: now waiting to actually perform the slice")
-            if self.countScansCompleted(2):
-                # perform the rest of these functions in another thread so that the shim setting doesn't lag behind too much
-                def updateVals():
-                    self.computeShimmedB0Map(idx)
-                    self.evaluateShimImages()
-                    if trigger is not None:
-                        trigger.finished.emit()
+    #     for idx in range(startIdx, startIdx + numindex):
+    #         self.log(f"-------------------------------------------------------------")
+    #         self.log(f"DEBUG: STARTING B0MAP {idx-startIdx+1} / {numindex}; slice {idx}")
+    #         self.log(f"DEBUG: solutions for this slice are {self.solutionsPerSlice[idx]}")
+    #         self.log(f"DEBUG: applied values for this slice are {self.solutionValuesToApplyPerSlice[idx]}")
 
-                kickoff_thread(updateVals)
-            else:
-                self.log("Error: Scans didn't complete")
-                self.exsiInstance.images_ready_event.clear()
-                self.exsiInstance.ready_event.clear()
+    #         self.log(f"DEBUG: now waiting to actually perform the slice")
+    #         if self.countScansCompleted(2):
+    #             # perform the rest of these functions in another thread so that the shim setting doesn't lag behind too much
+    #             def updateVals():
+    #                 self.computeShimmedB0Map(idx)
+    #                 self.evaluateShimImages()
+    #                 if trigger is not None:
+    #                     trigger.finished.emit()
 
+    #             kickoff_thread(updateVals)
+    #         else:
+    #             self.log("Error: Scans didn't complete")
+    #             self.exsiInstance.images_ready_event.clear()
+    #             self.exsiInstance.ready_event.clear()
+
+    # NOT UPDATED / VERIFIED
     def saveResults(self):
         def helper():
             if not self.backgroundB0Map.any():
@@ -931,7 +1048,7 @@ class Tool:
 
                 self.log(f"Saving stats for {labels[i]}")
                 # save all the slicewise stats, appended into one file
-                saveStats(imageTypeSaveDir, labels[i], self.shimStatStrs[i])
+                saveStats(imageTypeSaveDir, labels[i], self.shimStatStrsPerSlice[i])
                 # generate and then save Volume wise stats
                 stats, statarr = evaluate(data[i].flatten(), self.debugging)
                 saveStats(imageTypeSaveDir, labels[i], stats, volume=True)
