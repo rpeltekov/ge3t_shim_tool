@@ -77,9 +77,9 @@ def createMask(background: np.ndarray, bases: List[np.ndarray], roi: np.ndarray)
 
 
 def solveCurrents(
-    background,
-    rawBases,
-    mask,
+    background: np.ndarray,
+    rawBases: List[np.ndarray],
+    mask: np.ndarray,
     gradientCalStrength,
     loopCalStrength,
     debug=False,
@@ -90,8 +90,8 @@ def solveCurrents(
     bases = []
 
     bases.append(np.ones(background.shape))  # add the constant basis for center frequency calc
-    for base in rawBases:
-        bases.append(base.copy())
+    for rawBase in rawBases:
+        bases.append(rawBase.copy())
 
     vectorized = []
     for i in range(len(bases)):
