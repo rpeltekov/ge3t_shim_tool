@@ -259,7 +259,6 @@ class Tool:
         elif self.shimMode == ShimMode.VOLUME:
             return self.solutionsVolume
         else:
-            self.log(f"Error: No Solution for mode: {self.shimMode} and sliceIdx: {sliceIdx}")
             return None
 
     def getSolutionsToApply(self, sliceIdx=None):
@@ -268,7 +267,6 @@ class Tool:
         elif self.shimMode == ShimMode.VOLUME:
             return self.solutionValuesToApplyVolume
         else:
-            self.log(f"Error: No Solution 'To Apply' for mode: {self.shimMode} and sliceIdx: {sliceIdx}")
             return None
 
     def getSolutionStrings(self, mapIdx, sliceIdx=None):
@@ -277,9 +275,6 @@ class Tool:
         elif self.shimMode == ShimMode.VOLUME:
             return self.shimStatStrsVolume[mapIdx]
         else:
-            self.log(
-                f"No Solution Strings for mode: {self.shimMode} and mapIdx {mapIdx} and sliceIdx: {sliceIdx}"
-            )
             return None
 
     # ----------- Shim Tool management and compute Functions ----------- #
@@ -325,18 +320,31 @@ class Tool:
             self.principleSols[0] = self.exsiInstance.ogCenterFrequency
         if self.exsiInstance.ogLinearGradients is not None:
             self.principleSols[1:4] = self.exsiInstance.ogLinearGradients
+    
+    def resetStats(self, index, endIndex=None):
+        if endIndex is None:
+            endIndex = index + 1
+        for i in range(index, endIndex):
+            self.shimStatsPerSlice[i] = None
+            self.shimStatStrsPerSlice[i] = None
+            self.shimStatsVolume[i] = None
+            self.shimStatStrsVolume[i] = None
 
-    def resetShimSols(self):
+    def resetSolutions(self):
         self.solutionsPerSlice = None
         self.solutionValuesToApplyPerSlice = None
         self.solutionsVolume = None
         self.solutionValuesToApplyVolume = None
-        self.shimStatsPerSlice = [None, None, None]
-        self.shimStatStrsPerSlice = [None, None, None]
-        self.shimStatsPerSlice = [None, None, None]
-        self.shimStatStrsPerSlice = [None, None, None]
-        self.expectedB0Map = None
+
+    def resetActualResults(self):
         self.shimmedB0Map = None
+        self.resetStats(2)
+
+    def resetShimSolsAndActual(self):
+        self.expectedB0Map = None
+        self.resetSolutions()
+        self.resetStats(1)
+        self.resetActualResults()
 
     def overwriteBackground(self, sliceIdx=None):
         """
@@ -347,7 +355,7 @@ class Tool:
         if self.solutionValuesToApplyPerSlice is not None and sliceIdx is not None:
             self.principleSols = self.principleSols + self.solutionValuesToApplyPerSlice[sliceIdx]
         self.backgroundB0Map = self.shimmedB0Map
-        self.resetShimSols()
+        self.resetShimSolsAndActual()
         self.recomputeCurrentsAndView()
 
     def computeBackgroundB0map(self):
@@ -455,7 +463,11 @@ class Tool:
         b0maps = compute_b0maps(1, self.localExamRootDir)
         if self.shimmedB0Map is None:
             self.shimmedB0Map = np.full_like(b0maps[0], np.nan)
-        self.shimmedB0Map[:, idx, :] = b0maps[0][:, idx, :]
+        if self.shimMode == ShimMode.SLICE:
+            self.shimmedB0Map[:, idx, :] = b0maps[0][:, idx, :]
+        else: # VOLUME
+            self.log(f"saved volume shimmed b0map")
+            self.shimmedB0Map = b0maps[0]
         self.cropViewDataToFinalMask()
 
     def evaluateShimImages(self):
@@ -779,8 +791,9 @@ class Tool:
 
         obtainPrinciples = False
         if not self.autoPrescanDone:
+            self.log("resetting???")
             self.resetPrincipleSols()
-            self.resetShimSols()
+            self.resetShimSolsAndActual()
             self.shimInstance.shimZero()
             obtainPrinciples = True
 
@@ -791,7 +804,7 @@ class Tool:
         if self.countScansCompleted(2):
             self.transferScanData()
 
-            if self.backgroundB0Map is not None:
+            if self.obtainedBackground():
                 self.computeShimmedB0Map(sliceIdx)
             else:
                 self.computeBackgroundB0map()

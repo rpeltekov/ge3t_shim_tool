@@ -516,9 +516,9 @@ class Gui(QMainWindow):
         shimTypeLayout = QVBoxLayout()
         self.volumeSliceShimWidget.setLayout(shimTypeLayout)
         self.volumeSliceShimButtonGroup = QButtonGroup(self.volumeSliceShimWidget)
-        sliceShimRadioButton = QRadioButton("Perform Slice Shim")
+        sliceShimRadioButton = QRadioButton("Single Slice Shim Mode")
         sliceShimRadioButton.setChecked(True)
-        volumeShimRadioButton = QRadioButton("Perform Volume Shim")
+        volumeShimRadioButton = QRadioButton("Volume Shim Mode")
         self.volumeSliceShimButtonGroup.addButton(sliceShimRadioButton, ShimMode.SLICE.value)
         self.volumeSliceShimButtonGroup.addButton(volumeShimRadioButton, ShimMode.VOLUME.value)
         shimTypeLayout.addWidget(sliceShimRadioButton)
@@ -541,7 +541,7 @@ class Gui(QMainWindow):
 
         # add the button to recompute shim solutions
         self.recomputeCurrentsButton = addButtonConnectedToFunction(
-            settingsButtons, "Recompute\nShim Solutions", self.recomputeCurrentsAndView
+            settingsButtons, "Recompute Shim Solutions", self.recomputeCurrentsAndView
         )
         self.recomputeCurrentsButton.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         # set this to false to begin with because the currents are not computed yet
@@ -596,10 +596,10 @@ class Gui(QMainWindow):
             )
             disableWidgetsInList([self.doEvalApplShimsButton, self.doAllShimmedScansButton])
 
-            self.slowButtons += [
-                self.doEvalApplShimsButton,
-                self.doAllShimmedScansButton,
-            ]
+            # self.slowButtons += [
+            #     self.doEvalApplShimsButton,
+            #     self.doAllShimmedScansButton,
+            # ]
 
     def setup3rdTabLayout(self, layout: QBoxLayout):
         """
@@ -715,13 +715,12 @@ class Gui(QMainWindow):
         self.setWindowTitle(self.guiWindowTitle)
 
     def onTabSwitch(self, index):
-        self.log(f"Switched to tab {index}")
         if index == 0:
             if self.shimTool.obtainedBackground():
                 self.roiVizButtonGroup.buttons()[1].setEnabled(True)
         if index == 1:
-            self.log(f"did we get updated ROI? {self.shimTool.ROI.updated}")
             if self.shimTool.ROI.updated:
+                self.shimTool.resetShimSolsAndActual()
                 self.recomputeCurrentsAndView()
             self.shimTool.ROI.updated = False
         if index == 2:
@@ -736,7 +735,11 @@ class Gui(QMainWindow):
 
     def toggleShimStyleRadio(self, id):
         self.shimTool.shimMode = ShimMode.SLICE if id == ShimMode.SLICE.value else ShimMode.VOLUME
-        self.updateShimImageAndStats()
+        self.shimTool.resetActualResults()
+        if self.shimTool.obtainedSolutions():
+            self.recomputeCurrentsAndView()
+        else:
+            self.updateShimImageAndStats()
 
     def updateLogOutput(self, log, text):
         log.append(text)
@@ -1169,7 +1172,6 @@ class Gui(QMainWindow):
         trigger = Trigger()
 
         def actionAndUpdate():
-            self.toggleShimStyleRadio(self.volumeSliceShimButtonGroup.checkedId())
             self.updateShimImageAndStats()
             self.enableSlowButtons()
 
