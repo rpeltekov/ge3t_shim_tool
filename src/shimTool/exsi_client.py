@@ -57,6 +57,7 @@ class exsi:
         self.examNumber = None
         self.ogCenterFrequency = None
         self.ogLinearGradients = None
+        self.bedPosition = None
         self.patientName = None
 
         # function passed from GUI to directly queue a shimSetCurrentManual command
@@ -425,19 +426,33 @@ class exsi:
         self.send(f"WaitImagesReady")
 
     @requireExsiConnected
-    def sendSetScanPlaneOrientation(self, plane:str):
+    def sendSetScanPlaneOrientation(self, plane:str=None):
         """plane: str, one of 'coronal', 'sagittal', 'axial'"""
+        if plane is None:
+            plane = "coronal"
         self.send(f"SetRxGeometry plane={plane}")
 
     @requireExsiConnected
-    def sendSetCenterPosition(self, center:list[float], plane:str):
+    def sendSetCenterPosition(self, plane=None, center=None):
         """
         center: list[float], [r/l,a/p,s/i]
         plane: str, one of 'coronal', 'sagittal', 'axial'
+
+        if they are not provided, it defaults to the last bed position in S/I direction and zero otherwise
+        the plane defaults to coronal
         """
         def helper(triple):
             return f"{triple[0]},{triple[1]},{triple[2]}"
 
+        print(f"plane is {plane}, center is {center}")
+        if plane is None:
+            plane = "coronal"
+        if center is None:
+            if self.bedPosition is None:
+                self.getLastSetBedPosition()
+            center = [0.0,0.0,self.bedPosition]
+
+        print(f"plane is {plane}, center is {center}")
         if plane=="coronal":
             phaseNormal = [10,0,0]
             freqNormal = [0,0,10]
