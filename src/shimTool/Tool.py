@@ -618,6 +618,8 @@ class Tool:
         cvs = {"act_tr": 6000, "act_te": 1104, "rhrcctrl": 13, "rhimsize": 64}
         for i in range(2):
             self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendSetScanPlaneOrientation()
+            self.exsiInstance.sendSetCenterPosition()
             self.exsiInstance.sendActTask()
             for cv in cvs.keys():
                 if cv == "act_te":
@@ -726,6 +728,8 @@ class Tool:
         if self.exsiInstance and not self.assetCalibrationDone:
             self.exsiInstance.sendLoadProtocol("ConformalShimCalibration4")  # TODO rename the sequences on the scanner
             self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendSetScanPlaneOrientation("axial")
+            self.exsiInstance.sendSetCenterPosition("axial")
             self.exsiInstance.sendActTask()
             self.exsiInstance.sendPatientTable()
             self.exsiInstance.sendScan()
@@ -743,6 +747,8 @@ class Tool:
         if self.exsiInstance:
             self.exsiInstance.sendLoadProtocol("ConformalShimCalibration5")
             self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendSetScanPlaneOrientation()
+            self.exsiInstance.sendSetCenterPosition()
             self.exsiInstance.sendActTask()
             self.exsiInstance.sendPatientTable()
             self.exsiInstance.sendScan()

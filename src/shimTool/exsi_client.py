@@ -57,6 +57,7 @@ class exsi:
         self.examNumber = None
         self.ogCenterFrequency = None
         self.ogLinearGradients = None
+        self.bedPosition = None
         self.patientName = None
 
         # function passed from GUI to directly queue a shimSetCurrentManual command
@@ -289,9 +290,11 @@ class exsi:
                 self.getLastSetGradients()
                 ready = True
         elif self.last_command.startswith("SetGrxSlices"):
-            ready = True
-        elif self.last_command.startswith("SetRxsomething...."):  # TODO: what is this command?
-            ready = True
+            if "SetGrxSlices=ok" in msg:
+                ready = True
+        elif self.last_command.startswith("SetRxGeometry"):
+            if "SetRxGeometry=ok" in msg:
+                ready = True
         elif self.last_command.startswith("SetShimValues"):
             ready = "SetShimValues=ok" in msg
         elif self.last_command.startswith("Help"):
@@ -341,6 +344,25 @@ class exsi:
         else:
             print(f"Debug: failed to find the last used gradients")
         return None
+    
+    def getLastSetBedPosition(self):
+        # function to extract the last bed position from the scanner
+        file = "/usr/g/service/log/irmJvm.log"
+        command = f"tail -n 500 {file} | grep 'Table Position=' | tail -n 1"
+        output = execSSHCommand(self.host, self.hvPort, self.hvUser, self.hvPassword, command)
+        if output: 
+            last_line = output[0].strip()
+            match = re.search(r"Table Position=((S|I)\d+)", last_line)
+            if match:
+                sign = 1 if match.group(2) == "S" else -1
+                position = int(match.group(1)[1:]) * sign
+                print(f"EXSI CLIENT DEBUG: found that the last bed position was {position} mm")
+                self.bedPosition = position
+            else:
+                print("EXSI CLIENT DEBUG: no matches for bed position.")
+        else:
+            print(f"EXSI CLIENT DEBUG: failed to find the last bed position in {file}.")
+
 
     ##### EXSI CLIENT CONTROL FUNCTIONS #####
 
@@ -402,6 +424,46 @@ class exsi:
     @requireExsiConnected
     def sendWaitForImagesCollected(self):
         self.send(f"WaitImagesReady")
+
+    @requireExsiConnected
+    def sendSetScanPlaneOrientation(self, plane:str=None):
+        """plane: str, one of 'coronal', 'sagittal', 'axial'"""
+        if plane is None:
+            plane = "coronal"
+        self.send(f"SetRxGeometry plane={plane}")
+
+    @requireExsiConnected
+    def sendSetCenterPosition(self, plane=None, center=None):
+        """
+        center: list[float], [r/l,a/p,s/i]
+        plane: str, one of 'coronal', 'sagittal', 'axial'
+
+        if they are not provided, it defaults to the last bed position in S/I direction and zero otherwise
+        the plane defaults to coronal
+        """
+        def helper(triple):
+            return f"{triple[0]},{triple[1]},{triple[2]}"
+
+        print(f"plane is {plane}, center is {center}")
+        if plane is None:
+            plane = "coronal"
+        if center is None:
+            if self.bedPosition is None:
+                self.getLastSetBedPosition()
+            center = [0.0,0.0,self.bedPosition]
+
+        print(f"plane is {plane}, center is {center}")
+        if plane=="coronal":
+            phaseNormal = [10,0,0]
+            freqNormal = [0,0,10]
+        elif plane=="sagittal":
+            phaseNormal = [0,10,0]
+            freqNormal = [0,0,10]
+        else: # axial
+            phaseNormal = [10,0,0]
+            freqNormal = [0,10,0]
+
+        self.send(f"SetGrxSlices center={helper(center)} phaseNormal={helper(phaseNormal)} freqNormal={helper(freqNormal)}")
 
     def __del__(self):
         self.stop()
