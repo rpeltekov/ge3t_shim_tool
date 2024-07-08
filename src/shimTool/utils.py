@@ -2,8 +2,10 @@ import json
 import os
 import re
 import subprocess
+import code
 import threading
 from datetime import datetime
+import sys
 
 import numpy as np
 import paramiko
@@ -21,16 +23,16 @@ def log(msg, stdout=False):
     # record a timestamp and prepend to the message
     # TODO
     # base log function that every class uses to log to std out and maybe the guiLog? idk, this should be revisited....
-    guilog = "logs/guiLog.txt"
+    # guilog = "logs/guiLog.txt"
     current_time = datetime.now()
     formatted_time = current_time.strftime("%H:%M:%S")
     msg = f"{formatted_time} {msg}"
     # only print if in debugging mode, or if forceStdOut is set to True
     if stdout:
         print(msg)
-    # always write to the log file
-    with open(guilog, "a") as file:
-        file.write(f"{msg}\n")
+    # always write to the log file, create it if it does not exist
+    # with open(guilog, "a+") as file:
+    #     file.write(f"{msg}\n")
 
 
 def kickoff_thread(target, args=()):

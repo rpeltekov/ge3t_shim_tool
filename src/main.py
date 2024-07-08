@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 
 from shimTool.Gui import Gui
 from shimTool.Tool import Tool
+from shimTool.utils import kickoff_thread
 
 
 def handle_exit(signal_received, frame):
@@ -48,4 +49,4 @@ if __name__ == "__main__":
     else:
         tool = Tool(config, debugging=not args.quiet)
         code.interact(local=globals())
-        subprocess.run([sys.executable])
+

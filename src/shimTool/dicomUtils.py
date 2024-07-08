@@ -117,6 +117,6 @@ def extractBasicImageData(dcmSeriesPath, stride=1, offset=0):
     for i in range(0, len(paths), stride):
         data = pydicom.dcmread(paths[i + offset])
         data3d.append(data.pixel_array)
-        te, orientation = extractMetadata(data)
+        te, name = extractMetadata(data)
     data3d = np.stack(data3d, axis=0)
-    return data3d, te, orientation
+    return data3d, te, name

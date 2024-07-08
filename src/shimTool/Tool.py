@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from enum import Enum
 from typing import List
+import threading
 
 import numpy as np
 
@@ -28,6 +29,7 @@ class Tool:
     def __init__(self, config, debugging=True):
 
         # ----------- Shim Tool Essential Attributes ----------- #
+        self.toolConfigDone = threading.Event()
         self.config = config
         self.debugging = debugging
 
@@ -157,8 +159,25 @@ class Tool:
             ],
             dtype=object,
         )
+        kickoff_thread(self.waitForExSIConnectedReadyEvent)
 
     # ----------- Shim Tool Data/State Collection Functions ----------- #
+
+    # wait for exsi connected to update the name of the GUI application, the tab, and to create the exam data directory
+    def waitForExSIConnectedReadyEvent(self):
+        self.log(f"waiting for connection")
+        if not self.exsiInstance.connected_ready_event.is_set():
+            self.exsiInstance.connected_ready_event.wait()
+        
+        self.log(f"done waiting for connection")
+        self.localExamRootDir = os.path.join(
+            self.config["rootDir"],
+            "data",
+            self.exsiInstance.examNumber,
+        )
+        if not os.path.exists(self.localExamRootDir):
+            os.makedirs(self.localExamRootDir)
+        self.toolConfigDone.set()
 
     def transferScanData(self):
         self.log(f"Initiating transfer using rsync.")
@@ -577,13 +596,13 @@ class Tool:
         self.log(f"DEBUG: Setting center frequency from {self.principleSols[0]} to {newCF}")
         self.exsiInstance.sendSetCenterFrequency(newCF)
 
-    def setLinGradients(self, linGrad=[0.0, 0.0, 0.0]):
+    def setLinGradients(self, deltaLinGrad=[0.0, 0.0, 0.0]):
         """Set the new gradient as offset from the prescan set ones"""
         # if lingrad is a list of 3 ints, make them numpy array
-        if type(linGrad) == list:
-            linGrad = np.array(linGrad, dtype=np.float64)
-
-        linGrad += self.principleSols[1:4]
+        if type(deltaLinGrad) == list:
+            deltaLinGrad = np.array(deltaLinGrad, dtype=np.float64)
+        self.log(f"DEBUG: Setting linear gradients from {self.principleSols[1:4]} to {self.principleSols[1:4] + deltaLinGrad}")
+        linGrad = self.principleSols[1:4] + deltaLinGrad
 
         linGrad = np.round(linGrad).astype(int)
         self.exsiInstance.sendSetShimValues(*linGrad)
@@ -618,6 +637,7 @@ class Tool:
         cvs = {"act_tr": 6000, "act_te": 1104, "rhrcctrl": 13, "rhimsize": 64}
         for i in range(2):
             self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendSetCoil()
             self.exsiInstance.sendSetScanPlaneOrientation()
             self.exsiInstance.sendSetCenterPosition()
             self.exsiInstance.sendActTask()
@@ -650,7 +670,6 @@ class Tool:
     def queueB0MapPairScan(self):
         """
         Queue all the commands to perform the basis pair scan
-        -prescan: bool, whether to do an auto prescan -- This will reset the linear gradients!
         """
         # Basic basis pair scan. should be used to scan the background
         self.exsiInstance.sendLoadProtocol("ConformalShimCalibration3")
@@ -675,6 +694,8 @@ class Tool:
         # after scans get completed, go ahead and get the latest scan data over on this machine...
         self.transferScanData()
         return True
+
+    # ----------- Shim Tool Decorators ----------- #
 
     def requireShimConnection(func):
         """Decorator to check if the EXSI client is connected before running a function."""
@@ -728,8 +749,9 @@ class Tool:
         if self.exsiInstance and not self.assetCalibrationDone:
             self.exsiInstance.sendLoadProtocol("ConformalShimCalibration4")  # TODO rename the sequences on the scanner
             self.exsiInstance.sendSelTask()
-            self.exsiInstance.sendSetScanPlaneOrientation("axial")
-            self.exsiInstance.sendSetCenterPosition("axial")
+            self.exsiInstance.sendSetCoil()
+            # self.exsiInstance.sendSetScanPlaneOrientation()
+            # self.exsiInstance.sendSetCenterPosition()
             self.exsiInstance.sendActTask()
             self.exsiInstance.sendPatientTable()
             self.exsiInstance.sendScan()
@@ -747,6 +769,7 @@ class Tool:
         if self.exsiInstance:
             self.exsiInstance.sendLoadProtocol("ConformalShimCalibration5")
             self.exsiInstance.sendSelTask()
+            self.exsiInstance.sendSetCoil()
             self.exsiInstance.sendSetScanPlaneOrientation()
             self.exsiInstance.sendSetCenterPosition()
             self.exsiInstance.sendActTask()
@@ -768,6 +791,7 @@ class Tool:
             self.getROIBackgound()
         else:
             self.log("Getting latest image")
+            self.log(f"localExamRootDir: {self.localExamRootDir}")
             self.transferScanData()
             if os.path.exists(self.localExamRootDir):
                 self.getLatestData(stride=1)
@@ -810,9 +834,9 @@ class Tool:
         if self.countScansCompleted(2):
             self.transferScanData()
 
-            if self.obtainedBackground():
+            if self.obtainedBackground() and self.obtainedSolutions():
                 self.computeShimmedB0Map(sliceIdx)
-            else:
+            elif not self.obtainedBackground():
                 self.computeBackgroundB0map()
 
             # should set the principle solutions to the current center frequency and linear gradients
@@ -842,7 +866,7 @@ class Tool:
                 linGrad = [0.0, 0.0, 0.0]
                 linGrad[i] = self.gradientCalStrength
                 self.queueFieldmapProtocol()
-                self.setLinGradients(linGrad=linGrad)
+                self.setLinGradients(deltaLinGrad=linGrad)
                 self.queueTwoFgreSequences()
 
             for i in range(self.shimInstance.numLoops):
@@ -883,7 +907,7 @@ class Tool:
             self.setCenterFrequency(deltaCF=self.getSolutionsToApply(sliceIdx)[0])
 
             # setting the linear shims
-            self.setLinGradients(linGrad=self.getSolutionsToApply(sliceIdx)[1:4])
+            self.setLinGradients(deltaLinGrad=self.getSolutionsToApply(sliceIdx)[1:4])
 
             # setting the loop shim currents
             for i in range(self.shimInstance.numLoops):

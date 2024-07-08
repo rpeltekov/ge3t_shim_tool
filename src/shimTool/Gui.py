@@ -4,9 +4,10 @@ Includes both ui instantiation, as well as the logic for populating UI with data
 """
 
 import pickle
-import sys
+import sys, subprocess, code
 
 from PyQt6.QtCore import Qt
+import PyQt6.QtCore as QtCore
 from PyQt6.QtGui import QBrush, QColor, QDoubleValidator, QFontMetrics, QImage, QIntValidator, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -54,6 +55,7 @@ class Gui(QMainWindow):
         # ----- Tool Variables ----- #
         self.debugging = debugging  # tick this only when you continue to be devving...
         self.shimTool = Tool(config, self.debugging)
+        self.shimTool.toolConfigDone.wait() # wait for the tool to finish being configured, i.e. the connection has happened...
 
         # ----- GUI Properties that dont change ----- #
         self.latestStateSavePath = os.path.join("toolStates", "guiLatestState.pkl")
@@ -86,15 +88,6 @@ class Gui(QMainWindow):
 
         # wait for exsi connected to update the name of the GUI application, the tab, and to create the exam data directory
         def waitForExSIConnectedReadyEvent():
-            if not self.shimTool.exsiInstance.connected_ready_event.is_set():
-                self.shimTool.exsiInstance.connected_ready_event.wait()
-            self.shimTool.localExamRootDir = os.path.join(
-                self.shimTool.config["rootDir"],
-                "data",
-                self.shimTool.exsiInstance.examNumber,
-            )
-            if not os.path.exists(self.shimTool.localExamRootDir):
-                os.makedirs(self.shimTool.localExamRootDir)
             self.setWindowAndExamNumber(
                 self.shimTool.exsiInstance.examNumber,
                 self.shimTool.exsiInstance.patientName,
@@ -112,7 +105,7 @@ class Gui(QMainWindow):
         kickoff_thread(waitForShimConnectedEvent)
 
         # start the PyQt event loop
-        sys.exit(self.app.exec())
+        #sys.exit(self.app.exec())
 
     ##### GUI LAYOUT RELATED FUNCTIONS #####
 
