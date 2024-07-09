@@ -448,7 +448,6 @@ class exsi:
         def helper(triple):
             return f"{triple[0]},{triple[1]},{triple[2]}"
 
-        print(f"plane is {plane}, center is {center}")
         if plane is None:
             plane = "coronal"
         if center is None:
@@ -456,7 +455,6 @@ class exsi:
                 self.getLastSetBedPosition()
             center = [0.0,0.0,self.bedPosition]
 
-        print(f"plane is {plane}, center is {center}")
         if plane=="coronal":
             phaseNormal = [10,0,0]
             freqNormal = [0,0,10]
