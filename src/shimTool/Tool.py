@@ -78,8 +78,8 @@ class Tool:
         self.maxDeltaTE = 3500  # 2000 us = 2 ms
         self.minDeltaTE = 100  # 2000 us = 2 ms
         self.deltaTE = 3500
-        self.minGradientCalStrength = 10  # 100 mA
-        self.maxGradientCalStrength = 200  # 2 A
+        self.minGradientCalStrength = 10 
+        self.maxGradientCalStrength = 200  
         self.gradientCalStrength = 30  # max 300 -- the value at which to record basis map for lin shims
         self.minCalibrationCurrent = 100  # 100 mA
         self.maxCalibrationCurrent = 2000  # 2 A
@@ -432,6 +432,8 @@ class Tool:
                 self.gradientCalStrength,
                 self.loopCalCurrent,
                 debug=self.debugging,
+                gradientMax_ticks=self.maxGradientCalStrength,
+                loopMaxCurrent_mA=self.maxCalibrationCurrent,
             )
 
         # Compute the currents for the selected ROI
@@ -442,6 +444,8 @@ class Tool:
             self.gradientCalStrength,
             self.loopCalCurrent,
             debug=self.debugging,
+            gradientMax_ticks=self.maxGradientCalStrength,
+            loopMaxCurrent_mA=self.maxCalibrationCurrent,
         )
 
         self.setSolutionsToApply()  # compute the actual values we will apply to the shim system from these solutions
@@ -608,19 +612,32 @@ class Tool:
         linGrad = np.round(linGrad).astype(int)
         self.exsiInstance.sendSetShimValues(*linGrad)
 
-    def sendSyncedLoopSolution(self, channel: int, sliceIdx: int = None, ZeroOthers=False, calibration=False):
+    def sendSyncedLoopSolution(self, channel: int, sliceIdx: int = None, ZeroOthers=False, calibration=False, Zero=False):
         """Send a shim loop set current command, but via the ExSI client
         to ensure that the commands are synced with other exsi commands."""
-        principleOffset = self.principleSols[channel]
-        current = solutionToApply + principleOffset
 
-        solution = self.getSolutions(sliceIdx)[channel + 4]
-        solutionToApply = self.getSolutionsToApply(sliceIdx)[channel + 4]
+        if Zero:
+            self.log(f"Queueing loop {channel} zero")
+            self.exsiInstance.send(f"X {channel} {0.0}")
+            return
 
+        solutionToApply = 0.0
         if calibration:
             solutionToApply = self.loopCalCurrent
+        else:
+            solutionToApply = self.getSolutionsToApply(sliceIdx)[channel + 4]
+
+        if self.principleSols is not None:
+            principleOffset = self.principleSols[channel + 4]
+            current = solutionToApply + principleOffset
+        else:
+            current = solutionToApply
+            principleOffset = 0.0
+
+        current = current/1000 # convert to A
+
         self.log(
-            f"Queueing loop {channel} to {current:.3f}: solution={solution:.3f}, solToAply={solutionToApply:.3f}, principle={principleOffset:.3f}"
+            f"Queueing loop {channel} to {current:.3f}: solToAply={solutionToApply:.3f}, principle={principleOffset:.3f}"
         )
         self.exsiInstance.send(f"X {channel} {current}")
 
@@ -628,7 +645,7 @@ class Tool:
             # if this is some calibration scan, we want to zero all the other loops (or set them to their principle values)
             for i in range(self.shimInstance.numLoops):
                 if i != channel:
-                    self.sendSyncedLoopSolution(i, sliceIdx, ZeroOthers=False, calibration=calibration)
+                    self.sendSyncedLoopSolution(i, sliceIdx, ZeroOthers=False, calibration=calibration, Zero=True)
 
     def iterateFieldmapProtocol(self):
         """
@@ -874,8 +891,9 @@ class Tool:
                 self.iterateFieldmapProtocol()
 
             for i in range(self.shimInstance.numLoops):
-                self.queueFieldmapProtocol()
+                self.log(f"Queueing shim loop calibrations {i} of {self.shimInstance.numLoops}")
                 self.sendSyncedLoopSolution(i, sliceIdx=None, ZeroOthers=True, calibration=True)
+                self.queueFieldmapProtocol()
                 self.setLinGradients()  # set linear gradients down to zero
                 self.iterateFieldmapProtocol()
 
