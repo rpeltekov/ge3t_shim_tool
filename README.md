@@ -12,7 +12,7 @@ Custom Conformal Shimming Calibration and Computation Tool for GE3T MRI Scanner
 $ cd <path/to/shimTool>
 $ pip install -r requirements.txt
 ```
-2. Install / setup the pre-commit hooks
+2. [for development only] Install / setup the pre-commit hooks
     ```bash
     $ pre-commit install
     ```
