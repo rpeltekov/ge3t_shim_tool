@@ -25,3 +25,4 @@ $ python -i main.py [--no-gui] [--quiet]
 ```
 
 ## Using just the ExSI Client
+more details to be added...
