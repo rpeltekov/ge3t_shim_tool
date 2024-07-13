@@ -21,7 +21,7 @@ $ pip install -r requirements.txt
 
 4. Launch the tool. Use `--no-gui` to launch the tool in a python CLI or use `--quiet` to silence most of the logging and output.
 ```bash
-$ python -i main.py [--no-gui] [--quiet]
+$ python -i src/main.py [--no-gui] [--quiet]
 ```
 
 ## Using just the ExSI Client
