@@ -80,7 +80,7 @@ class Tool:
         self.deltaTE = 3500
         self.minGradientCalStrength = 10  # 100 mA
         self.maxGradientCalStrength = 200  # 2 A
-        self.gradientCalStrength = 60  # max 300 -- the value at which to record basis map for lin shims
+        self.gradientCalStrength = 30  # max 300 -- the value at which to record basis map for lin shims
         self.minCalibrationCurrent = 100  # 100 mA
         self.maxCalibrationCurrent = 2000  # 2 A
         self.loopCalCurrent = 1000  # 1 A
@@ -159,7 +159,7 @@ class Tool:
             ],
             dtype=object,
         )
-        kickoff_thread(self.waitForExSIConnectedReadyEvent)
+        self.waitForExSIConnectedReadyEvent()
 
     # ----------- Shim Tool Data/State Collection Functions ----------- #
 
@@ -178,6 +178,7 @@ class Tool:
         if not os.path.exists(self.localExamRootDir):
             os.makedirs(self.localExamRootDir)
         self.toolConfigDone.set()
+        self.log("Shim Tool is ready to use.")
 
     def transferScanData(self):
         self.log(f"Initiating transfer using rsync.")
@@ -593,7 +594,7 @@ class Tool:
     def setCenterFrequency(self, deltaCF=0):
         """Offset the center frequency of the scanner by deltaCF"""
         newCF = int(round(self.principleSols[0] + deltaCF))
-        self.log(f"DEBUG: Setting center frequency from {self.principleSols[0]} to {newCF}")
+        self.log(f"DEBUG: Setting center frequency: principle cf {self.principleSols[0]} + delta CF {deltaCF} = {newCF} to apply as int")
         self.exsiInstance.sendSetCenterFrequency(newCF)
 
     def setLinGradients(self, deltaLinGrad=[0.0, 0.0, 0.0]):
@@ -601,9 +602,9 @@ class Tool:
         # if lingrad is a list of 3 ints, make them numpy array
         if type(deltaLinGrad) == list:
             deltaLinGrad = np.array(deltaLinGrad, dtype=np.float64)
-        self.log(f"DEBUG: Setting linear gradients from {self.principleSols[1:4]} to {self.principleSols[1:4] + deltaLinGrad}")
         linGrad = self.principleSols[1:4] + deltaLinGrad
 
+        self.log(f"DEBUG: Setting linear gradients: principle lingrads {self.principleSols[1:4]} + delta lingrads {deltaLinGrad} = {linGrad} to apply as rounded int")
         linGrad = np.round(linGrad).astype(int)
         self.exsiInstance.sendSetShimValues(*linGrad)
 
@@ -629,7 +630,7 @@ class Tool:
                 if i != channel:
                     self.sendSyncedLoopSolution(i, sliceIdx, ZeroOthers=False, calibration=calibration)
 
-    def queueTwoFgreSequences(self):
+    def iterateFieldmapProtocol(self):
         """
         once the b0map sequence is loaded, subroutines are iterated along with cvs to obtain basis maps.
         linGrad should be a list of 3 floats if it is not None
@@ -673,7 +674,7 @@ class Tool:
         """
         # Basic basis pair scan. should be used to scan the background
         self.exsiInstance.sendLoadProtocol("ConformalShimCalibration3")
-        self.queueTwoFgreSequences()
+        self.iterateFieldmapProtocol()
 
     def countScansCompleted(self, n):
         """should be 2 for every basis pair scan"""
@@ -859,6 +860,9 @@ class Tool:
     @requireAssetCalibration
     def doBasisCalibrationScans(self, trigger: Trigger = None):
         """Perform all the calibration scans for each basis in the shim system."""
+        if not self.obtainedBackground():
+            self.log("Error: Need to obtain background before running basis calibration scans")
+            return
 
         def queueAll():
             # perform the calibration scans for the linear gradients
@@ -867,13 +871,13 @@ class Tool:
                 linGrad[i] = self.gradientCalStrength
                 self.queueFieldmapProtocol()
                 self.setLinGradients(deltaLinGrad=linGrad)
-                self.queueTwoFgreSequences()
+                self.iterateFieldmapProtocol()
 
             for i in range(self.shimInstance.numLoops):
                 self.queueFieldmapProtocol()
                 self.sendSyncedLoopSolution(i, sliceIdx=None, ZeroOthers=True, calibration=True)
                 self.setLinGradients()  # set linear gradients down to zero
-                self.queueTwoFgreSequences()
+                self.iterateFieldmapProtocol()
 
         kickoff_thread(queueAll)
 
