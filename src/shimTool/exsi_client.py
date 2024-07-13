@@ -54,6 +54,7 @@ class exsi:
         self.taskKeys = (
             None  # taskKeys starts out None, and is replaced when LoadProtocol is called with all the new taskKeys
         )
+        self.defaultCoil = None
         self.examNumber = None
         self.ogCenterFrequency = None
         self.ogLinearGradients = None
@@ -295,6 +296,9 @@ class exsi:
         elif self.last_command.startswith("SetRxGeometry"):
             if "SetRxGeometry=ok" in msg:
                 ready = True
+        elif self.last_command.startswith("SetRxParams"):
+            if "SetRxParams=ok" in msg:
+                ready = True
         elif self.last_command.startswith("SetShimValues"):
             ready = "SetShimValues=ok" in msg
         elif self.last_command.startswith("Help"):
@@ -444,7 +448,6 @@ class exsi:
         def helper(triple):
             return f"{triple[0]},{triple[1]},{triple[2]}"
 
-        print(f"plane is {plane}, center is {center}")
         if plane is None:
             plane = "coronal"
         if center is None:
@@ -452,7 +455,6 @@ class exsi:
                 self.getLastSetBedPosition()
             center = [0.0,0.0,self.bedPosition]
 
-        print(f"plane is {plane}, center is {center}")
         if plane=="coronal":
             phaseNormal = [10,0,0]
             freqNormal = [0,0,10]
@@ -464,6 +466,14 @@ class exsi:
             freqNormal = [0,10,0]
 
         self.send(f"SetGrxSlices center={helper(center)} phaseNormal={helper(phaseNormal)} freqNormal={helper(freqNormal)}")
+    
+    @requireExsiConnected
+    def sendSetCoil(self, coil:str=None):
+        if coil == None:
+            if self.defaultCoil is None:
+                return
+            coil = self.defaultCoil
+        self.send(f"SetRxParams coil={coil}")
 
     def __del__(self):
         self.stop()
