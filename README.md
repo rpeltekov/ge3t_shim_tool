@@ -25,4 +25,4 @@ $ python -i src/main.py [--no-gui] [--quiet]
 ```
 
 ## Using just the ExSI Client
-more details to be added...
+look at `src/examples` to see some examples of how to start and some basic usage of the exsi client on its own in both a jupyter notebook or a python script. If you want deeper details, look into the `exsi_client.py` code to see more about which commands and exsi operations are supported (essentially all the useful ones...)
