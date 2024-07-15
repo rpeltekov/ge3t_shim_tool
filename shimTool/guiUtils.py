@@ -38,15 +38,20 @@ class ColorBarItem(QGraphicsItem):
         return QRectF(0, 0, 50, 475)  # width and height of the color bar
 
     def paint(self, painter, option, widget):
-        gradient = QLinearGradient(0, 0, 0, 475)
+        rect = self.boundingRect()
+        gradient_rect = QRectF(10, 0, 40, 475)  # Adjust the gradient rectangle to be slightly smaller
+
+        # Define the gradient
+        gradient = QLinearGradient(
+            gradient_rect.left(), gradient_rect.top(), gradient_rect.left(), gradient_rect.bottom()
+        )
         gradient.setColorAt(0, QColor(0, 0, 0))  # black
         gradient.setColorAt(1, QColor(255, 255, 255))  # white
 
-        rect = self.boundingRect()
-        painter.fillRect(rect, gradient)
+        painter.fillRect(gradient_rect, gradient)
 
         # Calculate positions for numerical labels
-        tick_positions = [rect.top() + i * (rect.height() / (self.num_ticks - 1)) for i in range(self.num_ticks)]
+        tick_positions = [round(rect.top() + i * (rect.height() / (self.num_ticks - 1))) for i in range(self.num_ticks)]
 
         # Draw tick marks and labels
         font = QFont()
@@ -55,15 +60,83 @@ class ColorBarItem(QGraphicsItem):
 
         painter.setPen(QColor(0, 0, 0))  # black
         for pos in tick_positions:
-            pos_int = round(pos)
-            # print(pos_int)
-            # print(rect.left())
-            painter.drawLine(round(rect.left()), pos_int, round(rect.left()) + 10, pos_int)  # Draw tick mark
-            print(self.max_val)
-            print(self.min_val)
-            value = self.max_val - ((pos_int - rect.top()) / rect.height()) * (self.max_val - self.min_val)
-            # print(value)
-            painter.drawText(rect.adjusted(15, pos - 8, -5, 0), f"{value:.2f}")
+            painter.drawLine(
+                round(gradient_rect.left()) - 5, pos, round(gradient_rect.left()), pos
+            )  # Draw tick mark inside the gradient rectangle
+            value = self.max_val - ((pos - round(rect.top())) / round(rect.height())) * (self.max_val - self.min_val)
+            painter.drawText(
+                round(gradient_rect.left()) - 35, pos + 4, f"{value:.2f}"
+            )  # Adjust the position of the labels inside the gradient rectangl
+
+
+# class ColorBarItem(QGraphicsItem):
+#     def __init__(self, min_val, max_val, parent=None):
+#         super(ColorBarItem, self).__init__(parent)
+#         self.min_val = max_val
+#         self.max_val = min_val
+#         self.num_ticks = 6  # Number of tick marks on the color bar
+
+#     def boundingRect(self):
+#         return QRectF(0, 0, 50, 475)  # width and height of the color bar
+
+#     def paint(self, painter, option, widget):
+#         rect = self.boundingRect()
+#         gradient_rect = QRectF(0, 0, 50, 475)
+
+#         # Define the gradient
+#         gradient = QLinearGradient(gradient_rect.left(), gradient_rect.top(), gradient_rect.left(), gradient_rect.bottom())
+#         gradient.setColorAt(0, QColor(0, 0, 0))  # black
+#         gradient.setColorAt(1, QColor(255, 255, 255))  # white
+
+#         painter.fillRect(gradient_rect, gradient)
+
+#         # Calculate positions for numerical labels
+#         tick_positions = [rect.top() + i * (rect.height() / (self.num_ticks - 1)) for i in range(self.num_ticks)]
+
+#         # Draw tick marks and labels
+#         font = QFont()
+#         font.setPixelSize(8)  # Adjust font size as needed
+#         painter.setFont(font)
+
+#         painter.setPen(QColor(0, 0, 0))  # black
+#         for pos in tick_positions:
+#             pos_int = round(pos)
+#             painter.drawLine(round(rect.left()), pos_int, round(rect.left()) + 10, pos_int)  # Draw tick mark inside the gradient rectangle
+#             value = self.max_val - ((pos_int - rect.top()) / rect.height()) * (self.max_val - self.min_val)
+#             painter.drawText(round(rect.left()) + 15, pos_int + 4, f'{value:.2f}')  # Adjust the position of the labels inside the gradient rectangle
+
+# class ColorBarItem(QGraphicsItem):
+#     def __init__(self, min_val, max_val, parent=None):
+#         super(ColorBarItem, self).__init__(parent)
+#         self.min_val = max_val
+#         self.max_val = min_val
+#         self.num_ticks = 6  # Number of tick marks on the color bar
+
+#     def boundingRect(self):
+#         return QRectF(0, 0, 70, 475)  # width and height of the color bar
+
+#     def paint(self, painter, option, widget):
+#         gradient = QLinearGradient(0, 0, 0, 475)
+#         gradient.setColorAt(0, QColor(0, 0, 0))  # black
+#         gradient.setColorAt(1, QColor(255, 255, 255))  # white
+
+#         rect = self.boundingRect()
+#         painter.fillRect(rect, gradient)
+
+#         # Calculate positions for numerical labels
+#         tick_positions = [rect.top() + i * (rect.height() / (self.num_ticks - 1)) for i in range(self.num_ticks)]
+
+#         # Draw tick marks and labels
+#         font = QFont()
+#         font.setPixelSize(8)  # Adjust font size as needed
+#         painter.setFont(font)
+
+#         painter.setPen(QColor(0, 0, 0))  # black
+#         for pos in tick_positions:
+#             pos_int = round(pos)
+#             painter.drawLine(round(rect.left()), pos_int, round(rect.left()) + 10, pos_int)  # Draw tick mark
+#             value = self.max_val - ((pos_int - rect.top()) / rect.height()) * (self.max_val - self.min_val)
+#             painter.drawText(rect.adjusted(15, pos - 8, -5, 0), f'{value:.2f}')
 
 
 class ColorBar(QGraphicsView):
@@ -131,7 +204,7 @@ class ImageViewer(QGraphicsView):
         self.setFixedSize(self.width, self.height)  # Set a fixed size for the view
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self.colorbar = ColorBar()
-        self.colorbar.setFixedWidth(60)  # Set a fixed width for the color bar
+        self.colorbar.setFixedWidth(110)  # Set a fixed width for the color bar
         self.colorbar.setFixedHeight(self.height)  # Match height with the viewer
 
         # Layout to include image and color bar
