@@ -4,10 +4,10 @@
 import os
 import pickle
 import sys
+import threading
 from datetime import datetime
 from enum import Enum
 from typing import List
-import threading
 
 import numpy as np
 
@@ -74,7 +74,7 @@ class Tool:
         self.shimInstance.clearExsiQueue = self.exsiInstance.clear_command_queue
         self.exsiInstance.clearShimQueue = self.shimInstance.clearCommandQueue
 
-        # ----------- Shim Tool Parameters ----------- #
+        # ----------- Shim Tool Preconfigured Parameters ----------- #
         self.maxDeltaTE = 3500  # 2000 us = 2 ms
         self.minDeltaTE = 100  # 2000 us = 2 ms
         self.deltaTE = 3500
@@ -84,6 +84,9 @@ class Tool:
         self.minCalibrationCurrent = 100  # 100 mA
         self.maxCalibrationCurrent = 2000  # 2 A
         self.loopCalCurrent = 1000  # 1 A
+
+        # determined in issue #16 with src/experiments/characterizeGradients.ipynb
+        self.gradientHzPerMMPerTick = 0.044  # .044 Hz / mm / tick
 
         # tool file directories
         self.gehcExamDataPath = None  # the path to the exam data on the GE Server
@@ -107,11 +110,12 @@ class Tool:
 
         # 3d data arrays
         self.backgroundB0Map: np.ndarray = None  # 3d array of the background b0 map
-        self.rawBasisB0maps: List[np.ndarray] = [
-            None for _ in range(self.shimInstance.numLoops + 3)
+        self.gradientBasisB0Maps: List[np.ndarray] = [None for _ in range(3)]
+        self.rawShimBasisB0maps: List[np.ndarray] = [
+            None for _ in range(self.shimInstance.numLoops)
         ]  # 3d arrays of the basis b0 maps with background
-        self.basisB0maps: List[np.ndarray] = [
-            None for _ in range(self.shimInstance.numLoops + 3)
+        self.shimBasisB0maps: List[np.ndarray] = [
+            None for _ in range(self.shimInstance.numLoops)
         ]  # 3d arrays of the basis b0 maps without background
         self.expectedB0Map: np.ndarray = None  # 3d array of the shimmed b0 map;
         self.shimmedB0Map: np.ndarray = None  # 3d array of the shimmed b0 map;
@@ -143,7 +147,7 @@ class Tool:
 
         # state getter functions
         self.obtainedBackground = lambda: self.backgroundB0Map is not None
-        self.obtainedBasisMaps = lambda: self.basisB0maps[0] is not None
+        self.obtainedBasisMaps = lambda: self.shimBasisB0maps[0] is not None
         self.obtainedSolutions = lambda: self.solutionsVolume is not None
         self.obtainedShimmedB0Map = lambda: self.shimmedB0Map is not None
 
@@ -155,7 +159,7 @@ class Tool:
                 # three sets of 3D data, unfilled, for shim view (background, estimated, actual)
                 np.array([None, None, None], dtype=object),
                 # unfilled 4 dimension numpy array: # of basis views x 3D data for each basis view
-                np.array([None for _ in range(self.shimInstance.numLoops + 3)], dtype=object),
+                np.array([None for _ in range(self.shimInstance.numLoops)], dtype=object),
             ],
             dtype=object,
         )
@@ -168,7 +172,7 @@ class Tool:
         self.log(f"waiting for connection")
         if not self.exsiInstance.connected_ready_event.is_set():
             self.exsiInstance.connected_ready_event.wait()
-        
+
         self.log(f"done waiting for connection")
         self.localExamRootDir = os.path.join(
             self.config["rootDir"],
@@ -290,7 +294,7 @@ class Tool:
             return None
 
     def getSolutionStrings(self, mapIdx, sliceIdx=None):
-        if self.shimMode == ShimMode.SLICE and sliceIdx is not None and self.shimStatStrsPerSlice[mapIdx] is not None: 
+        if self.shimMode == ShimMode.SLICE and sliceIdx is not None and self.shimStatStrsPerSlice[mapIdx] is not None:
             return self.shimStatStrsPerSlice[mapIdx][sliceIdx]
         elif self.shimMode == ShimMode.VOLUME:
             return self.shimStatStrsVolume[mapIdx]
@@ -301,7 +305,7 @@ class Tool:
 
     def computeMask(self):
         """compute the mask for the shim images"""
-        self.finalMask = createMask(self.backgroundB0Map, self.basisB0maps, self.ROI.getROIMask())
+        self.finalMask = createMask(self.backgroundB0Map, self.shimBasisB0maps, self.ROI.getROIMask())
         self.log(f"Computed Mask from background, basis and ROI.")
 
     def cropViewDataToFinalMask(self):
@@ -318,7 +322,7 @@ class Tool:
                 toViewer[~self.finalMask] = np.nan
                 self.viewData[1][i] = toViewer
 
-        for i, basis in enumerate(self.basisB0maps):
+        for i, basis in enumerate(self.shimBasisB0maps):
             if basis is not None:
                 toViewer = np.copy(basis)
                 toViewer[~self.finalMask] = np.nan
@@ -340,7 +344,7 @@ class Tool:
             self.principleSols[0] = self.exsiInstance.ogCenterFrequency
         if self.exsiInstance.ogLinearGradients is not None:
             self.principleSols[1:4] = self.exsiInstance.ogLinearGradients
-    
+
     def resetStats(self, index, endIndex=None):
         if endIndex is None:
             endIndex = index + 1
@@ -380,16 +384,25 @@ class Tool:
 
     def computeBackgroundB0map(self):
         # assumes that you have just gotten background by queueBasisPairScan
-        b0maps = compute_b0maps(1, self.localExamRootDir)
+        b0maps, pixelDim = compute_b0maps_with_pixeldim(1, self.localExamRootDir)
         self.backgroundDCMdir = listSubDirs(self.localExamRootDir)[-1]
         self.backgroundB0Map = b0maps[0]
 
         self.computeMask()
         self.cropViewDataToFinalMask()
 
+        # need to create the basis maps for the linear gradients
+        self.gradientBasisB0Maps = createLinearGradientBasisMap(
+            self.backgroundB0Map,
+            self.gradientHzPerMMPerTick,
+            self.gradientCalStrength,
+            pixelDim,
+            self.exsiInstance.fovCenter,
+        )
+
     def computeBasisB0maps(self):
         # assumes that you have just gotten background by queueBasisPairScan
-        self.rawBasisB0maps = compute_b0maps(self.shimInstance.numLoops + 3, self.localExamRootDir)
+        self.rawShimBasisB0maps = compute_b0maps(self.shimInstance.numLoops, self.localExamRootDir)
 
     def computeShimCurrents(self):
         """
@@ -397,8 +410,10 @@ class Tool:
         Save the generated expected B0 map to the expectedB0map array
         """
         # run whenever both backgroundB0Map and basisB0maps are computed or if one new one is obtained
-        self.basisB0maps = subtractBackground(self.backgroundB0Map, self.rawBasisB0maps)
+        self.shimBasisB0maps = subtractBackground(self.backgroundB0Map, self.rawShimBasisB0maps)
         self.computeMask()
+
+        bases = self.shimBasisB0maps + self.gradientBasisB0Maps
 
         # Compute the Currents Per Slice.
         self.solutionsPerSlice = [None for _ in range(self.backgroundB0Map.shape[1])]
@@ -427,7 +442,7 @@ class Tool:
             # Solve the solution currents for the slice
             self.solutionsPerSlice[i] = solveCurrents(
                 self.backgroundB0Map,
-                self.basisB0maps,
+                bases,
                 neighborsMask,
                 self.gradientCalStrength,
                 self.loopCalCurrent,
@@ -437,7 +452,7 @@ class Tool:
         # Compute the currents for the selected ROI
         self.solutionsVolume = solveCurrents(
             self.backgroundB0Map,
-            self.basisB0maps,
+            bases,
             self.finalMask,
             self.gradientCalStrength,
             self.loopCalCurrent,
@@ -455,19 +470,23 @@ class Tool:
                         self.expectedB0Map[:, i, :] += self.solutionsPerSlice[i][0] * np.ones(
                             self.backgroundB0Map[:, 0, :].shape
                         )
-                        numIter = self.shimInstance.numLoops + 3
-                        for j in range(numIter):
+                        for j in range(3):
                             self.expectedB0Map[:, i, :] += (
-                                self.solutionsPerSlice[i][j + 1] * self.basisB0maps[j][:, i, :]
+                                self.solutionsPerSlice[i][j + 1] * self.gradientBasisB0Maps[j][:, i, :]
+                            )
+                        for j in range(self.shimInstance.numLoops):
+                            self.expectedB0Map[:, i, :] += (
+                                self.solutionsPerSlice[i][j + 4] * self.shimBasisB0maps[j][:, i, :]
                             )
                     else:
                         self.expectedB0Map[:, i, :] = np.nan
             else:  # VOLUME
                 if self.solutionsVolume is not None:
                     self.expectedB0Map += self.solutionsVolume[0] * np.ones(self.backgroundB0Map.shape)
-                    numIter = self.shimInstance.numLoops + 3
-                    for j in range(numIter):
-                        self.expectedB0Map += self.solutionsVolume[j + 1] * self.basisB0maps[j]
+                    for j in range(3):
+                        self.expectedB0Map += self.solutionsVolume[j + 1] * self.gradientBasisB0Maps[j]
+                    for j in range(self.shimInstance.numLoops):
+                        self.expectedB0Map += self.solutionsVolume[j + 4] * self.shimBasisB0maps[j]
                 else:
                     self.expectedB0Map = np.nan
 
@@ -485,7 +504,7 @@ class Tool:
             self.shimmedB0Map = np.full_like(b0maps[0], np.nan)
         if self.shimMode == ShimMode.SLICE:
             self.shimmedB0Map[:, idx, :] = b0maps[0][:, idx, :]
-        else: # VOLUME
+        else:  # VOLUME
             self.log(f"saved volume shimmed b0map")
             self.shimmedB0Map = b0maps[0]
         self.cropViewDataToFinalMask()
@@ -575,9 +594,7 @@ class Tool:
                         )
                     for j in range(4, len(self.solutionsPerSlice[i])):
                         # update the current values
-                        self.solutionValuesToApplyPerSlice[i][j] = (
-                            self.solutionsPerSlice[i][j] * self.loopCalCurrent
-                        )
+                        self.solutionValuesToApplyPerSlice[i][j] = self.solutionsPerSlice[i][j] * self.loopCalCurrent
 
         # for the Volume Solution to apply
         if self.solutionsVolume is not None:
@@ -594,7 +611,9 @@ class Tool:
     def setCenterFrequency(self, deltaCF=0):
         """Offset the center frequency of the scanner by deltaCF"""
         newCF = int(round(self.principleSols[0] + deltaCF))
-        self.log(f"DEBUG: Setting center frequency: principle cf {self.principleSols[0]} + delta CF {deltaCF} = {newCF} to apply as int")
+        self.log(
+            f"DEBUG: Setting center frequency: principle cf {self.principleSols[0]} + delta CF {deltaCF} = {newCF} to apply as int"
+        )
         self.exsiInstance.sendSetCenterFrequency(newCF)
 
     def setLinGradients(self, deltaLinGrad=[0.0, 0.0, 0.0]):
@@ -604,7 +623,9 @@ class Tool:
             deltaLinGrad = np.array(deltaLinGrad, dtype=np.float64)
         linGrad = self.principleSols[1:4] + deltaLinGrad
 
-        self.log(f"DEBUG: Setting linear gradients: principle lingrads {self.principleSols[1:4]} + delta lingrads {deltaLinGrad} = {linGrad} to apply as rounded int")
+        self.log(
+            f"DEBUG: Setting linear gradients: principle lingrads {self.principleSols[1:4]} + delta lingrads {deltaLinGrad} = {linGrad} to apply as rounded int"
+        )
         linGrad = np.round(linGrad).astype(int)
         self.exsiInstance.sendSetShimValues(*linGrad)
 
@@ -804,7 +825,7 @@ class Tool:
     def recomputeCurrentsAndView(self, trigger: Trigger = None):
         self.computeMask()
         self.cropViewDataToFinalMask()
-        if self.backgroundB0Map is not None and self.basisB0maps[0] is not None:
+        if self.backgroundB0Map is not None and self.shimBasisB0maps[0] is not None:
             self.expectedB0Map = None
             self.computeShimCurrents()
         self.evaluateShimImages()
@@ -865,14 +886,6 @@ class Tool:
             return
 
         def queueAll():
-            # perform the calibration scans for the linear gradients
-            for i in range(3):
-                linGrad = [0.0, 0.0, 0.0]
-                linGrad[i] = self.gradientCalStrength
-                self.queueFieldmapProtocol()
-                self.setLinGradients(deltaLinGrad=linGrad)
-                self.iterateFieldmapProtocol()
-
             for i in range(self.shimInstance.numLoops):
                 self.queueFieldmapProtocol()
                 self.sendSyncedLoopSolution(i, sliceIdx=None, ZeroOthers=True, calibration=True)
@@ -882,9 +895,9 @@ class Tool:
         kickoff_thread(queueAll)
 
         self.shimInstance.shimZero()  # NOTE: Hopefully this zeros quicker that the scans get set up...
-        self.rawBasisB0maps = None
+        self.rawShimBasisB0maps = None
         self.exsiInstance.images_ready_event.clear()
-        num_scans = (self.shimInstance.numLoops + 3) * 2
+        num_scans = (self.shimInstance.numLoops) * 2
         if self.countScansCompleted(num_scans):
             self.log("DEBUG: just finished all the calibration scans")
             self.computeBasisB0maps()
@@ -1069,8 +1082,8 @@ class Tool:
             data = data[: lastNotNone + 1]  # only save data that has been collected so far (PRUNE THE NONEs)
 
             for i in range(len(bases)):
-                if self.basisB0maps[i] is not None:
-                    bases.append(np.copy(self.basisB0maps))
+                if self.shimBasisB0maps[i] is not None:
+                    bases.append(np.copy(self.shimBasisB0maps))
                     lastNotNone = i
                     bases[i][~self.finalMask] = np.nan
                     vmax = max(vmax, np.nanmax(np.abs(bases[i])))

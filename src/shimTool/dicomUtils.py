@@ -56,21 +56,29 @@ def get_orientation(orientation_cosines):
 def extractMetadata(dcm):
     try:
         te = getattr(dcm, "EchoTime")
-        # TODO(rob): implement the series descriptor, so you can append to the top of the visualizer
         series_desc = getattr(dcm, "SeriesDescription")
 
-        # add orientation
-        # if 'Image Orientation (Patient)' in dcm:
-        #     orientation_cosines = dcm['Image Orientation (Patient)'].value
-        #     orientation = get_orientation(orientation_cosines)
-        # else:
+        # TODO(rob): need to update this to implement orientation flipping.
+        # will impact the pixel spacing in the future too...
         orientation = None
 
-        # TODO issue #1: use this to see how to extract orientation metadata
-        # for elem in dcm.iterall():
-        #     print(f"Tag: {elem.tag}, Name: {elem.name}, VR: {elem.VR}, Value: {elem.value}")
+        if "PixelSpacing" in dcm:
+            pixel_spacing = dcm.PixelSpacing
+            pixel_size_x, pixel_size_z = pixel_spacing
+        else:
+            raise ValueError("Pixel Spacing information is not available in this DICOM file.")
 
-        return te, series_desc
+        # Extract Z pixel size from SpacingBetweenSlices or SliceThickness
+        if "SpacingBetweenSlices" in dcm:
+            pixel_size_y = dcm.SpacingBetweenSlices
+        elif "SliceThickness" in dcm:
+            pixel_size_y = dcm.SliceThickness
+        else:
+            raise ValueError("Y spacing information is not available in this DICOM file.")
+
+        pixelDims = [pixel_size_x, pixel_size_y, pixel_size_z]
+
+        return te, series_desc, pixelDims
     except Exception as e:
         print(f"Error extracting metadata: {e}")
         return None, None
@@ -94,7 +102,7 @@ def extractComplexImageData(dcmSeriesPath, threshFactor=0.5):
         Is.append(I.pixel_array)
         Qs.append(Q.pixel_array)
         if te is None:
-            te, name = extractMetadata(mag)
+            te, name, pixelDims = extractMetadata(mag)
     mags = np.stack(mags, axis=0)
     Is = np.stack(Is, axis=0)
     Qs = np.stack(Qs, axis=0)
@@ -104,7 +112,7 @@ def extractComplexImageData(dcmSeriesPath, threshFactor=0.5):
     mask = mags < thresh
     phase[mask] = np.nan
 
-    return phase, te, name
+    return phase, te, name, pixelDims
 
 
 def extractBasicImageData(dcmSeriesPath, stride=1, offset=0):
@@ -117,6 +125,6 @@ def extractBasicImageData(dcmSeriesPath, stride=1, offset=0):
     for i in range(0, len(paths), stride):
         data = pydicom.dcmread(paths[i + offset])
         data3d.append(data.pixel_array)
-        te, name = extractMetadata(data)
+        te, name, pixelDims = extractMetadata(data)
     data3d = np.stack(data3d, axis=0)
-    return data3d, te, name
+    return data3d, te, name, pixelDims

@@ -19,6 +19,25 @@ def compute_b0map(first, second, te1, te2):
     return angle / (2 * np.pi) / ((te2 - te1) * 1e-3)
 
 
+def compute_b0maps_with_pixeldim(n, localExamRootDir, threshFactor=0.4) -> List[np.ndarray]:
+    # NOTE: Assumes that n most recent scans are all basis pair scans.
+    """Computes the last n b0maps from pairs"""
+    seriesPaths = listSubDirs(localExamRootDir)
+    seriesPaths = seriesPaths[-n * 2 :]
+    b0maps = []
+    pixelDims = []
+    for i in range(0, n * 2, 2):
+        data1 = extractComplexImageData(seriesPaths[i], threshFactor=threshFactor)
+        phase1, te1, name1, pixelDims = data1
+        print(f"DEBUG: Extracted te1 {te1}, name1 {name1}")
+        data2 = extractComplexImageData(seriesPaths[i + 1], threshFactor=threshFactor)
+        phase2, te2, name2 = data2
+        print(f"DEBUG: Extracted te2 {te2}, name2 {name2}")
+        b0map = compute_b0map(phase1, phase2, te1, te2)
+        b0maps.append(b0map)
+    return b0maps, pixelDims
+
+
 def compute_b0maps(n, localExamRootDir, threshFactor=0.4) -> List[np.ndarray]:
     # NOTE: Assumes that n most recent scans are all basis pair scans.
     """Computes the last n b0maps from pairs"""
@@ -26,13 +45,40 @@ def compute_b0maps(n, localExamRootDir, threshFactor=0.4) -> List[np.ndarray]:
     seriesPaths = seriesPaths[-n * 2 :]
     b0maps = []
     for i in range(0, n * 2, 2):
-        phase1, te1, name1 = extractComplexImageData(seriesPaths[i], threshFactor=threshFactor)
+        data1 = extractComplexImageData(seriesPaths[i], threshFactor=threshFactor)
+        phase1, te1, name1 = data1
         print(f"DEBUG: Extracted te1 {te1}, name1 {name1}")
-        phase2, te2, name2 = extractComplexImageData(seriesPaths[i + 1], threshFactor=threshFactor)
+        data2 = extractComplexImageData(seriesPaths[i + 1], threshFactor=threshFactor)
+        phase2, te2, name2 = data2
         print(f"DEBUG: Extracted te2 {te2}, name2 {name2}")
         b0map = compute_b0map(phase1, phase2, te1, te2)
         b0maps.append(b0map)
     return b0maps
+
+
+def createLinearGradientBasisMap(background, gradientHzPerMMPerTick, ticks, pixelDims, fovCenter) -> np.ndarray:
+    """
+    make linear gradient basis maps at ticks strength in Hz/mm/tick and pixelDims in mm for each axis
+    consider:
+        background array is arranged [y,z,x]
+        pixelDims is [x, y, z]
+        fovCenter is [x, y, z]
+    """
+    hzPerMM = gradientHzPerMMPerTick * ticks
+    hzPerPixel = hzPerMM / np.array(pixelDims)
+    basisMaps = []
+    sizes = background.shape
+    sizes = [sizes[1], sizes[2], sizes[0]]
+    for i in range(3):
+        basismap = np.ones(background.shape)
+        basisMaps.append(basismap)
+    for y in range(background.shape[0]):
+        for z in range(background.shape[1]):
+            for x in range(background.shape[2]):
+                pos = [x, y, z]
+                for i in range(3):
+                    basismap[i][y, z, x] = hzPerPixel[i] * (pos[i] - sizes[i] // 2 + fovCenter[i] + 0.5)
+    return basisMaps
 
 
 def subtractBackground(background, b0maps) -> List[np.ndarray]:
