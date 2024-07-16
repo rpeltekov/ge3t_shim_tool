@@ -760,30 +760,65 @@ class Gui(QMainWindow):
 
     def updateDisplay(self, viewIndex):
         """Update a specific view with the corresponding underlying data available."""
-        viewDataSlice = self.viewDataSlice[viewIndex]  # this should be a 2d numpy array now
-        # if view data is not none, then so should the slice and maxAbs value
+        viewDataSlice = self.viewDataSlice[viewIndex]  # this should be a 2D numpy array now
+
         if viewDataSlice is not None:
             # Extract the slice and normalize it
             scale = self.viewMaxAbs[viewIndex]
+            min_val = np.nanmin(viewDataSlice)
+            max_val = np.nanmax(viewDataSlice)
+
             if viewIndex > 0:
-                # when we are looking at b0maps, the numbers can be negative
+                # When we are looking at b0maps, the numbers can be negative
                 scale = 2 * scale
-                normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 127 + 127
+                normalizedData = (viewDataSlice - min_val) / (max_val - min_val) * 255
             else:
-                normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 255
-            # make the value 127 (correlates to 0 Hz offset) wherever it is outside of mask
+                normalizedData = (viewDataSlice - min_val) / (max_val - min_val) * 255
+
+            # Handle NaN values by setting them to 0 (black)
             normalizedData[np.isnan(viewDataSlice)] = 0
-            # specific pyqt6 stuff to convert numpy array to QImage
+
+            # Specific PyQt6 stuff to convert numpy array to QImage
             displayData = np.ascontiguousarray(normalizedData).astype(np.uint8)
-            # stack 4 times for R, G, B, and alpha value
-            rgbData = np.stack((displayData,) * 3, axis=-1)
-            height, width, _ = rgbData.shape
-            bytesPerLine = rgbData.strides[0]
-            qImage = QImage(rgbData.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
-            # set the actual view that we care about
+
+            # Stack 4 times for R, G, B, and alpha value (set alpha to 255 for full opacity)
+            rgbaData = np.stack((displayData, displayData, displayData, np.full_like(displayData, 255)), axis=-1)
+
+            height, width, _ = rgbaData.shape
+            bytesPerLine = rgbaData.strides[0]
+            qImage = QImage(rgbaData.data, width, height, bytesPerLine, QImage.Format.Format_RGBA8888)
+
+            # Set the actual view that we care about
             self.views[viewIndex].qImage = qImage
             self.views[viewIndex].viewData = viewDataSlice
             self.setView(qImage, self.views[viewIndex])
+
+    # def updateDisplay1(self, viewIndex):
+    #     """Update a specific view with the corresponding underlying data available."""
+    #     viewDataSlice = self.viewDataSlice[viewIndex]  # this should be a 2d numpy array now
+    #     # if view data is not none, then so should the slice and maxAbs value
+    #     if viewDataSlice is not None:
+    #         # Extract the slice and normalize it
+    #         scale = self.viewMaxAbs[viewIndex]
+    #         if viewIndex > 0:
+    #             # when we are looking at b0maps, the numbers can be negative
+    #             scale = 2 * scale
+    #             normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 127 + 127
+    #         else:
+    #             normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 255
+    #         # make the value 127 (correlates to 0 Hz offset) wherever it is outside of mask
+    #         normalizedData[np.isnan(viewDataSlice)] = 0
+    #         # specific pyqt6 stuff to convert numpy array to QImage
+    #         displayData = np.ascontiguousarray(normalizedData).astype(np.uint8)
+    #         # stack 4 times for R, G, B, and alpha value
+    #         rgbData = np.stack((displayData,) * 3, axis=-1)
+    #         height, width, _ = rgbData.shape
+    #         bytesPerLine = rgbData.strides[0]
+    #         qImage = QImage(rgbData.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
+    #         # set the actual view that we care about
+    #         self.views[viewIndex].qImage = qImage
+    #         self.views[viewIndex].viewData = viewDataSlice
+    #         self.setView(qImage, self.views[viewIndex])
 
     def visualizeROI(self):
         """
