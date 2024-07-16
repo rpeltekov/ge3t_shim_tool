@@ -247,11 +247,13 @@ class shim:
     def shimSetCurrentManual(self, channel, current:float, board):
         """helper function to set the current for a specific channel on a specific board."""
         self.requireShimDriverConnected()
+        current = float(current)
         self.send(f"X {board} {channel} {current}")
 
     def shimSetCurrentManual(self, channel, current: float):
         """helper function to set the current for a specific channel on a specific board."""
         self.requireShimDriverConnected()
+        current = float(current)
         self.send(f"X {channel // 8} {channel % 8} {current}")
 
 
