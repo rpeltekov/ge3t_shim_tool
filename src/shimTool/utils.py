@@ -45,7 +45,7 @@ def launchInThread(func):
     """Decorator to run a function in a separate thread."""
 
     def wrapper(self, *args, **kwargs):
-        kickoff_thread(func, (self, *args))
+        kickoff_thread(func, (self, *args **kwargs))
 
     return wrapper
 

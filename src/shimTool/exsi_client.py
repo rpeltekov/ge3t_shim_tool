@@ -100,18 +100,23 @@ class exsi:
                     cmd = self.command_queue.get(timeout=1)
                     print("EXSI CLIENT DEBUG: Processing command: ", cmd)
                     # check if we need to initialize current switch as well...
-                    pattern = r"(\d+)\s(\d+\.\d+)"
                     if cmd.startswith("X"):
-                        # Proess synced shim current set command. shouldn't queue anything else after this
+                        # Process synced shim current set command. 
+                        # shouldn't process anything else after for this cycle
+                        pattern = r"X\s(\d+)\s(-?\d+\.\d+)"
                         match = re.match(pattern, cmd)
-                        channel = int(match.group(1))
-                        current = float(match.group(2))
-                        self.sendCurrentCmd(channel, current)
-                        if self.debugging:
-                            print(
-                                f"EXSI CLIENT Debug: SEND SYNC CURRENT COMMAND, channel {channel} current {current:.2f}"
-                            )
-                        continue
+                        if match is not None:
+                            channel = int(match.group(1))
+                            current = float(match.group(2))
+                            self.sendCurrentCmd(channel, current)
+                            if self.debugging:
+                                print(
+                                    f"EXSI CLIENT Debug: SEND SYNC CURRENT COMMAND, channel {channel} current {current:.2f}"
+                                )
+                            continue
+                        else:
+                            print(f"EXSI CLIENT DEBUG: Did not register {cmd} as a valid current command.")
+                            raise ValueError(f"Invalid current command: {cmd}")
                     if not "WaitImagesReady" in cmd:
                         # don't send a command if we are just using a dummy message to wait for images to be collected...
                         self._send_command(cmd)

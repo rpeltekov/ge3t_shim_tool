@@ -163,7 +163,7 @@ def solveCurrents(
 
     # constraint vectors
     g = np.vstack((np.eye(len(rawBases) + 1), -np.eye(len(rawBases) + 1)))  # plus 4 for cf and 3 lin grads
-    h = np.ones(1) * 2000  # for the center frequency in hz
+    h = np.ones(1) * 200  # for the center frequency in hz
     h = np.concatenate((h, gradientMax_ticks / (np.ones(3) * gradientCalStrength)))  # for the linear gradients
     h = np.concatenate((h, loopMaxCurrent_mA / (np.ones(len(rawBases) - 3) * loopCalStrength)))
     h = np.concatenate((h, h))  # double it for the negative constraints
