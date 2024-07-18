@@ -389,7 +389,7 @@ class Tool:
 
     def computeBasisB0maps(self):
         # assumes that you have just gotten background by queueBasisPairScan
-        self.rawBasisB0maps = compute_b0maps(self.shimInstance.numLoops + 3, self.localExamRootDir)
+        self.rawBasisB0maps = compute_b0maps(2*self.shimInstance.numLoops + 3, self.localExamRootDir)
 
     def computeShimCurrents(self):
         """
@@ -397,7 +397,8 @@ class Tool:
         Save the generated expected B0 map to the expectedB0map array
         """
         # run whenever both backgroundB0Map and basisB0maps are computed or if one new one is obtained
-        self.basisB0maps = subtractBackground(self.backgroundB0Map, self.rawBasisB0maps)
+        self.basisB0maps = subtractBackground(self.backgroundB0Map, self.rawBasisB0maps[:3])
+        self.basisB0maps += subtractPlusMinus(self.rawBasisB0maps[3::2], self.rawBasisB0maps[4::2])
         self.computeMask()
 
         # Compute the Currents Per Slice.
@@ -646,6 +647,18 @@ class Tool:
             for i in range(self.shimInstance.numLoops):
                 if i != channel:
                     self.sendSyncedLoopSolution(i, sliceIdx, ZeroOthers=False, calibration=calibration, Zero=True)
+    
+    def sendSyncedLoopCurrent(self, channel, current, zeroOthers=False):
+        """Send a shim loop set current command, but via the ExSI client
+        to ensure that the commands are synced with other exsi commands."""
+        channel = int(channel)
+        current = float(current)
+        self.log(f"Queueing loop {channel} to {current}")
+        self.exsiInstance.send(f"X {channel} {current}")
+        if zeroOthers:
+            for i in range(self.shimInstance.numLoops):
+                if i != channel:
+                    self.sendSyncedLoopCurrent(i, 0, False)
 
     def iterateFieldmapProtocol(self):
         """
@@ -892,9 +905,12 @@ class Tool:
 
             for i in range(self.shimInstance.numLoops):
                 self.log(f"Queueing shim loop calibrations {i} of {self.shimInstance.numLoops}")
-                self.sendSyncedLoopSolution(i, sliceIdx=None, ZeroOthers=True, calibration=True)
+                self.sendSyncedLoopCurrent(i, 0.5, zeroOthers=True)
                 self.queueFieldmapProtocol()
                 self.setLinGradients()  # set linear gradients down to zero
+                self.iterateFieldmapProtocol()
+                self.sendSyncedLoopCurrent(i, -0.5, zeroOthers=True)
+                self.queueFieldmapProtocol()
                 self.iterateFieldmapProtocol()
 
         kickoff_thread(queueAll)
@@ -902,7 +918,7 @@ class Tool:
         self.shimInstance.shimZero()  # NOTE: Hopefully this zeros quicker that the scans get set up...
         self.rawBasisB0maps = None
         self.exsiInstance.images_ready_event.clear()
-        num_scans = (self.shimInstance.numLoops + 3) * 2
+        num_scans = (2*self.shimInstance.numLoops + 3) * 2
         if self.countScansCompleted(num_scans):
             self.log("DEBUG: just finished all the calibration scans")
             self.computeBasisB0maps()

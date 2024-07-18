@@ -42,6 +42,12 @@ def subtractBackground(background, b0maps) -> List[np.ndarray]:
         bases.append(b0maps[i] - background)
     return bases
 
+def subtractPlusMinus(pluses, minuses) -> List[np.ndarray]:
+    # NOTE: Assumes b0maps[0] is background and the rest are loops @ 1 A!!!!
+    shimBases = []
+    for i in range(len(pluses)):
+        shimBases.append(pluses[i] - minuses[i])
+    return shimBases
 
 def maskOneSlice(mask, sliceIdx) -> np.ndarray:
     """Return the mask with only one slice filled; 3D Array in CORONAL ORIENTATION"""
