@@ -71,9 +71,6 @@ class Gui(QMainWindow):
             [np.nan for _ in range(3)], dtype=object
         )  # three sets of 2D Slice Data that is actually visualized
 
-        # the value range for each view
-        self.viewMaxAbs = [0 for _ in range(3)]
-
         # start building the state vector for the GUI. These are all the essential data structures that are necessary to reload the app
         self.state = {"checkboxes": {}}
 
@@ -764,7 +761,6 @@ class Gui(QMainWindow):
 
         if viewDataSlice is not None:
             # Extract the slice and normalize it
-            scale = self.viewMaxAbs[viewIndex]
             min_val = np.nanmin(viewDataSlice)
             max_val = np.nanmax(viewDataSlice)
 
@@ -792,33 +788,6 @@ class Gui(QMainWindow):
             self.views[viewIndex].qImage = qImage
             self.views[viewIndex].viewData = viewDataSlice
             self.setView(qImage, self.views[viewIndex])
-
-    # def updateDisplay1(self, viewIndex):
-    #     """Update a specific view with the corresponding underlying data available."""
-    #     viewDataSlice = self.viewDataSlice[viewIndex]  # this should be a 2d numpy array now
-    #     # if view data is not none, then so should the slice and maxAbs value
-    #     if viewDataSlice is not None:
-    #         # Extract the slice and normalize it
-    #         scale = self.viewMaxAbs[viewIndex]
-    #         if viewIndex > 0:
-    #             # when we are looking at b0maps, the numbers can be negative
-    #             scale = 2 * scale
-    #             normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 127 + 127
-    #         else:
-    #             normalizedData = (viewDataSlice - np.nanmin(viewDataSlice)) / scale * 255
-    #         # make the value 127 (correlates to 0 Hz offset) wherever it is outside of mask
-    #         normalizedData[np.isnan(viewDataSlice)] = 0
-    #         # specific pyqt6 stuff to convert numpy array to QImage
-    #         displayData = np.ascontiguousarray(normalizedData).astype(np.uint8)
-    #         # stack 4 times for R, G, B, and alpha value
-    #         rgbData = np.stack((displayData,) * 3, axis=-1)
-    #         height, width, _ = rgbData.shape
-    #         bytesPerLine = rgbData.strides[0]
-    #         qImage = QImage(rgbData.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
-    #         # set the actual view that we care about
-    #         self.views[viewIndex].qImage = qImage
-    #         self.views[viewIndex].viewData = viewDataSlice
-    #         self.setView(qImage, self.views[viewIndex])
 
     def visualizeROI(self):
         """
@@ -888,8 +857,6 @@ class Gui(QMainWindow):
         if self.shimTool.obtainedBackground():
             self.roiVizButtonGroup.buttons()[1].setEnabled(True)
 
-        # get the max abs value of the background data
-        self.viewMaxAbs[0] = np.max(np.abs(self.shimTool.viewData[0]))
         # if the data is background
         if self.roiVizButtonGroup.checkedId() == 1:
             if not self.shimTool.obtainedBackground():
@@ -948,11 +915,6 @@ class Gui(QMainWindow):
         # check that there even is data to visualize to begin with
         if self.shimTool.viewData[1][selectedShimView] is None:
             return False
-
-        # get the max abs value of the shimView data set
-        for i in range(self.shimTool.viewData[1].shape[0]):
-            if self.shimTool.viewData[1][i] is not None:
-                self.viewMaxAbs[1] = max(self.viewMaxAbs[1], np.nanmax(np.abs(self.shimTool.viewData[1][i])))
 
         # set the limit to the shim slice index slider
         upperlimit = self.shimTool.viewData[1][0].shape[1] - 1
@@ -1033,14 +995,6 @@ class Gui(QMainWindow):
 
     def validateBasisInputs(self):
         """Validate the inputs for the Basis Views"""
-
-        # get the max abs value of the basisView data set
-        for i in range(self.shimTool.viewData[2].shape[0]):
-            if self.shimTool.viewData[2][i] is not None:
-                self.viewMaxAbs[2] = max(self.viewMaxAbs[2], np.nanmax(np.abs(self.shimTool.viewData[2][i])))
-            else:
-                self.log("ERROR: Calibration scans done marker checked, but basis data is not available yet")
-                return False  # cancel the viewing, since clearly some of the data is not there yet...
 
         # set the limit to the basis slice index slider
         numslices = self.shimTool.viewData[2][0].shape[1] - 1

@@ -78,7 +78,6 @@ class ColorBarItem(QGraphicsItem):
                 round(gradient_rect.left()) - 10, round(pos), round(gradient_rect.left()) - 5, round(pos), self
             )
             self.tick_items.append(tick_line)
-            # self.scene().addItem(tick_line)  # Add tick mark to the scene
 
             value = self.max_val - ((pos - rect.top()) / rect.height()) * (self.max_val - self.min_val)
             tick_text = QGraphicsTextItem(f"{value:.2f}", self)
@@ -86,7 +85,6 @@ class ColorBarItem(QGraphicsItem):
             tick_text.setDefaultTextColor(QColor(0, 0, 0))
             tick_text.setPos(round(gradient_rect.left()) - 45, round(pos) - 8)
             self.label_items.append(tick_text)
-            # self.scene().addItem(tick_text)  # Add label to the scene
 
 
 class ColorBar(QGraphicsView):
@@ -105,15 +103,6 @@ class ColorBar(QGraphicsView):
         max_val = np.nanmax(data)
         self.colorbar_item = ColorBarItem(min_val, max_val)
         self.scene.addItem(self.colorbar_item)
-
-        # fig, ax = plt.subplots(figsize=(1, 5))
-        # norm = plt.Normalize(vmin=np.nanmin(data), vmax=np.nanmax(data))
-        # fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='gray'), cax=ax)
-
-        # canvas = FigureCanvas(fig)
-        # canvas.draw()
-        # pixmap = canvas.grab()
-        # self.colorbar_item = self.scene.addPixmap(pixmap)
 
 
 class LogMonitorThread(QThread):
@@ -158,20 +147,11 @@ class ImageViewer(QGraphicsView):
         self.colorbar.setFixedHeight(self.height)  # Match height with the viewer
 
         # Layout to include image and color bar
-        # Not sure if I should put the part below in Gui.py or here, like most of the add widget functions have been in gui.py
-
         hlayout = QHBoxLayout()
         layout.addLayout(hlayout)
         hlayout.addWidget(self, alignment=Qt.AlignmentFlag.AlignCenter)
         hlayout.addWidget(self.colorbar)
         layout.addWidget(self.label)
-
-        # def update_colorbar(viewer, data):
-        #     viewer.viewData = data
-        #     viewer.colorbar.update_colorbar(data)
-
-        # TODO issue #7 add color bar
-        # np.nanmax and nanmin, set black to minimum and white to maximum
 
     def set_pixmap(self, pixmap):
         if self.pixmap_item is None:
