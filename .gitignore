@@ -1,6 +1,5 @@
 # python
-*/__pycache__/*
-__pycache__/*
+__pycache__
 
 # configs
 config.json

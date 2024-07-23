@@ -21,7 +21,8 @@ $ pip install -r requirements.txt
 
 4. Launch the tool. Use `--no-gui` to launch the tool in a python CLI or use `--quiet` to silence most of the logging and output.
 ```bash
-$ python main.py [--no-gui] [--quiet]
+$ python -i src/main.py [--no-gui] [--quiet]
 ```
 
 ## Using just the ExSI Client
+look at `src/examples` to see some examples of how to start and some basic usage of the exsi client on its own in both a jupyter notebook or a python script. If you want deeper details, look into the `exsi_client.py` code to see more about which commands and exsi operations are supported (essentially all the useful ones...)
