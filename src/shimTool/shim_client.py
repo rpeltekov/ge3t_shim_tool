@@ -25,7 +25,7 @@ class shim:
         self.lastCommand = ""
 
         # TODO: add a way to set the num loops and update the arduino code to accept those changes
-        self.numLoops = 0
+        self.numLoops = 8
         self.loopCurrents = [0 for _ in range(self.numLoops)]
         self.calibrated = False
 
@@ -225,46 +225,35 @@ class shim:
     def __del__(self):
         self.stop()
 
-    # ______ SHIM SPECIFIC COMMANDS ______ #
+    def requireShimDriverConnected(self):
+        # Check the status of the event
+        if not self.connectedEvent.is_set() and not self.debugging:
+            # Show a message to the user, reconnect shim client.
+            raise ShimDriverError("SHIM Client Not Connected")
 
-    def requireShimDriverConnected(func):
-        """Decorator to check if the EXSI client is connected before running a function."""
-
-        def wrapper(self, *args, **kwargs):
-            # Check the status of the event
-            if not self.connectedEvent.is_set() and not self.debugging:
-                # Show a message to the user, reconnect shim client.
-                raise ShimDriverError("SHIM Client Not Connected")
-            return func(self)
-
-        return wrapper
-
-    @launchInThread
-    @requireShimDriverConnected
     def shimCalibrate(self):
+        self.requireShimDriverConnected()
         self.send("C")
 
-    @launchInThread
-    @requireShimDriverConnected
     def shimZero(self):
+        self.requireShimDriverConnected()
         self.send("Z")
 
-    @launchInThread
-    @requireShimDriverConnected
     def shimGetCurrent(self):
         # Could be used to double check that the channels calibrated
+        self.requireShimDriverConnected()
         self.send("I")
 
-    @launchInThread
-    @requireShimDriverConnected
-    def shimSetCurrentManual(self, channel, current, board):
+    def shimSetCurrentManual(self, channel, current:float, board):
         """helper function to set the current for a specific channel on a specific board."""
+        self.requireShimDriverConnected()
+        current = float(current)
         self.send(f"X {board} {channel} {current}")
 
-    @launchInThread
-    @requireShimDriverConnected
-    def shimSetCurrentManual(self, channel, current):
+    def shimSetCurrentManual(self, channel, current: float):
         """helper function to set the current for a specific channel on a specific board."""
+        self.requireShimDriverConnected()
+        current = float(current)
         self.send(f"X {channel // 8} {channel % 8} {current}")
 
 

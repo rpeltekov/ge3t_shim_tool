@@ -14,3 +14,6 @@ toolStates
 
 # no logs
 *scanner_log.txt
+
+# no data saved...
+*.npz

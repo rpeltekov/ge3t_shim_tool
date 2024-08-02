@@ -52,7 +52,8 @@ def computeFieldmapFromFirstSeriesName(n, localExamRootDir, threshFactor=0.4) ->
         b0maps.append(b0map)
     return b0maps[0]
 
-def load_config(filename):
-    with open(filename, "r") as file:
-        return json.load(file)
-
+def load_tool():
+    if "tool" in globals():
+        del globals()["tool"]
+    config = load_config("/home/heartvista/Documents/robert/ge3t_shim_tool/config.json")
+    return Tool(config, debugging=True)
