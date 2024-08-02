@@ -368,7 +368,8 @@ class exsi:
                 print(f"EXSI CLIENT DEBUG: found that the last bed position was {position} mm")
                 self.bedPosition = position
             else:
-                print("EXSI CLIENT DEBUG: no matches for bed position.")
+                print("EXSI CLIENT DEBUG: no matches for bed position. Defaulting to 0.")
+                self.bedPosition = 0
         else:
             print(f"EXSI CLIENT DEBUG: failed to find the last bed position in {file}.")
 
