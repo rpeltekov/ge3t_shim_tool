@@ -3,11 +3,13 @@ This module contains the GUI for the application.
 Includes both ui instantiation, as well as the logic for populating UI with data
 """
 
+import code
 import pickle
-import sys, subprocess, code
+import subprocess
+import sys
 
-from PyQt6.QtCore import Qt
 import PyQt6.QtCore as QtCore
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor, QDoubleValidator, QFontMetrics, QImage, QIntValidator, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -55,7 +57,7 @@ class Gui(QMainWindow):
         # ----- Tool Variables ----- #
         self.debugging = debugging  # tick this only when you continue to be devving...
         self.shimTool = Tool(config, self.debugging)
-        self.shimTool.toolConfigDone.wait() # wait for the tool to finish being configured, i.e. the connection has happened...
+        self.shimTool.toolConfigDone.wait()  # wait for the tool to finish being configured, i.e. the connection has happened...
 
         # ----- GUI Properties that dont change ----- #
         self.latestStateSavePath = os.path.join("toolStates", "guiLatestState.pkl")
@@ -105,7 +107,7 @@ class Gui(QMainWindow):
         kickoff_thread(waitForShimConnectedEvent)
 
         # start the PyQt event loop
-        #sys.exit(self.app.exec())
+        # sys.exit(self.app.exec())
 
     ##### GUI LAYOUT RELATED FUNCTIONS #####
 
@@ -332,7 +334,9 @@ class Gui(QMainWindow):
         layout.addWidget(shimStatTextLabel)
         layout.addLayout(statsLayout)
 
-        self.saveResultsButton = addButtonConnectedToFunction(layout, "Save results (Not Verified)", self.shimTool.saveResults)
+        self.saveResultsButton = addButtonConnectedToFunction(
+            layout, "Save results (Not Verified)", self.shimTool.saveResults
+        )
 
     def setupShimRightView(self, layout: QBoxLayout):
         """Setup the right side of the shim tab view"""

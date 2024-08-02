@@ -6,13 +6,18 @@ import inspect
 import time
 from functools import partial
 
+import matplotlib.pyplot as plt
 import numpy as np
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QImage, QIntValidator, QValidator
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from PyQt6.QtCore import QObject, QRectF, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QImage, QIntValidator, QLinearGradient, QPainter, QPen, QValidator
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QCheckBox,
+    QGraphicsItem,
+    QGraphicsLineItem,
     QGraphicsScene,
+    QGraphicsTextItem,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
@@ -22,6 +27,82 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSlider,
 )
+
+
+class ColorBarItem(QGraphicsItem):
+    def __init__(self, min_val, max_val, parent=None):
+        super(ColorBarItem, self).__init__(parent)
+        self.min_val = min_val
+        self.max_val = max_val
+        self.num_ticks = 6  # Number of tick marks on the color bar
+        self.tick_items = []  # To store tick mark items
+        self.label_items = []  # To store label items
+
+    def boundingRect(self):
+        return QRectF(0, 0, 50, 475)  # Width and height of the color bar
+
+    def paint(self, painter, option, widget):
+        rect = self.boundingRect()
+        gradient_rect = QRectF(10, 0, 40, 475)  # Adjust the gradient rectangle to be slightly smaller
+
+        # Define the gradient
+        gradient = QLinearGradient(
+            gradient_rect.left(), gradient_rect.top(), gradient_rect.left(), gradient_rect.bottom()
+        )
+        gradient.setColorAt(1, QColor(0, 0, 0))  # black
+        gradient.setColorAt(0, QColor(255, 255, 255))  # white
+
+        painter.fillRect(gradient_rect, gradient)
+
+        # Calculate positions for numerical labels
+        tick_positions = [rect.top() + i * (rect.height() / (self.num_ticks - 1)) for i in range(self.num_ticks)]
+
+        # Draw tick marks and labels
+        font = QFont()
+        font.setPixelSize(8)  # Adjust font size as needed
+        painter.setFont(font)
+
+        pen = QPen(QColor(0, 0, 0))  # Pen for tick marks
+        painter.setPen(pen)
+
+        # Clear previous tick and label items
+        for item in self.tick_items + self.label_items:
+            if item.scene():
+                item.scene().removeItem(item)
+        self.tick_items.clear()
+        self.label_items.clear()
+
+        for pos in tick_positions:
+
+            tick_line = QGraphicsLineItem(
+                round(gradient_rect.left()) - 10, round(pos), round(gradient_rect.left()) - 5, round(pos), self
+            )
+            self.tick_items.append(tick_line)
+
+            value = self.max_val - ((pos - rect.top()) / rect.height()) * (self.max_val - self.min_val)
+            tick_text = QGraphicsTextItem(f"{value:.2f}", self)
+            tick_text.setFont(font)
+            tick_text.setDefaultTextColor(QColor(0, 0, 0))
+            tick_text.setPos(round(gradient_rect.left()) - 45, round(pos) - 8)
+            self.label_items.append(tick_text)
+
+
+class ColorBar(QGraphicsView):
+    def __init__(self, parent=None):
+        super(ColorBar, self).__init__(parent)
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+        self.colorbar_item = None
+        self.update_colorbar(np.array([]))
+
+    def update_colorbar(self, data):
+        self.scene.clear()
+        if data.size == 0:
+            return
+        min_val = np.nanmin(data)
+        max_val = np.nanmax(data)
+        self.colorbar_item = ColorBarItem(min_val, max_val)
+        self.scene.addItem(self.colorbar_item)
 
 
 class LogMonitorThread(QThread):
@@ -49,16 +130,28 @@ class LogMonitorThread(QThread):
 
 
 class ImageViewer(QGraphicsView):
-    def __init__(self, parent=None, label=None):
+    def __init__(self, parent=None, layout=None):
         super(ImageViewer, self).__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         self.pixmap_item = None
         self.qImage: QImage = None
         self.viewData = None  # 2D data that the image viewer is currently being set to show
-        self.label = label
+        self.label = QLabel()
+        self.width = 512
+        self.height = 512
+        self.setFixedSize(self.width, self.height)  # Set a fixed size for the view
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        self.colorbar = ColorBar()
+        self.colorbar.setFixedWidth(110)  # Set a fixed width for the color bar
+        self.colorbar.setFixedHeight(self.height)  # Match height with the viewer
 
-        # TODO issue #7 add color bar
+        # Layout to include image and color bar
+        hlayout = QHBoxLayout()
+        layout.addLayout(hlayout)
+        hlayout.addWidget(self, alignment=Qt.AlignmentFlag.AlignCenter)
+        hlayout.addWidget(self.colorbar)
+        layout.addWidget(self.label)
 
     def set_pixmap(self, pixmap):
         if self.pixmap_item is None:
@@ -66,6 +159,9 @@ class ImageViewer(QGraphicsView):
         else:
             self.pixmap_item.setPixmap(pixmap)
         self.pixmap = pixmap.toImage()
+
+        if pixmap is not None and self.colorbar is not None:
+            self.colorbar.update_colorbar(self.viewData)
 
     def mouseMoveEvent(self, event):
         if self.pixmap_item is not None and self.label is not None and self.viewData is not None:
@@ -170,7 +266,7 @@ def addLabeledSliderAndEntry(layout: QBoxLayout, labelStr: str, updateFunc):
 
 def updateSliderEntryLimits(LabelSliderEntry: list, minVal: int, maxVal: int, defaultVal: int = None):
     slider = LabelSliderEntry[1]
-    entry = LabelSliderEntry[2] 
+    entry = LabelSliderEntry[2]
     slider.setMinimum(minVal)
     slider.setMaximum(maxVal)
     entry.setValidator(QIntValidator(minVal, maxVal))
@@ -221,21 +317,26 @@ def updateSlider(entry: QLineEdit, updateFunc, value: int):
         else:
             updateFunc()
 
+
 def hideWidgetsInList(widgets):
     for widget in widgets:
         widget.hide()
+
 
 def showWidgetsInList(widgets):
     for widget in widgets:
         widget.show()
 
+
 def disableWidgetsInList(widgets):
     for widget in widgets:
         widget.setEnabled(False)
 
+
 def enableWidgetsInList(widgets):
     for widget in widgets:
         widget.setEnabled(True)
+
 
 # ------------ gui ROI shapes ------------ #
 class ROIObject:
