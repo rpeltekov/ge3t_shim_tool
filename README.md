@@ -1,3 +1,7 @@
+Thesis Project for my EECS 5th year masters @ Berkeley.
+
+Publication can be found [here](http://www2.eecs.berkeley.edu/Pubs/TechRpts/2024/EECS-2024-163.html).
+
 # ge3t_conformal_shim
 Custom Conformal Shimming Calibration and Computation Tool for GE3T MRI Scanner
 * Automated using ExSI. A tool made by GE for the GE
